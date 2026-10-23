@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Институт Цифры — Лови код</title>
+  <link rel="stylesheet" href="style.css?v=2.3">
+</head>
+<body>
+  <main class="app">
+    <section class="hero-card">
+      <div class="brand-small">ИНСТИТУТ ЦИФРЫ КЕМГУ</div>
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <div class="kicker">нейроаркада</div>
+          <h1>ЛОВИ<br>КОД</h1>
+          <p class="subtitle">Управляй движением руки. Собирай код. Избегай ошибок.</p>
+        </div>
+        <div class="hero-visual" aria-hidden="true">
+          <div class="logo-panel">
+            <svg viewBox="0 0 220 220" class="brand-mark" aria-hidden="true">
+              <rect x="18" y="18" width="184" height="184" fill="none" stroke="currentColor" stroke-width="12"/>
+              <path d="M35 45 C75 52, 55 102, 34 145" fill="none" stroke="currentColor" stroke-width="12"/>
+              <path d="M55 160 L110 40 L110 180" fill="none" stroke="currentColor" stroke-width="12"/>
+              <path d="M110 40 Q153 72, 190 44" fill="none" stroke="currentColor" stroke-width="12"/>
+              <path d="M146 112 L190 94" fill="none" stroke="currentColor" stroke-width="12"/>
+              <path d="M168 160 L189 148" fill="none" stroke="currentColor" stroke-width="12"/>
+            </svg>
+            <div class="window-bar">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="window-content">
+              <div class="big-counter">404</div>
+              <div class="window-text">ошибки мимо, код в копилку</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="play-shell" id="playShell">
+      <canvas id="game"></canvas>
+
+      <div class="topbar brand-badge">Институт Цифры</div>
+
+      <div class="hud" id="hud">
+        <div class="hud-box score-box">
+          <div class="hud-label">Счёт</div>
+          <div class="hud-value" id="score">0000</div>
+        </div>
+        <div class="hud-box timer-box">
+          <div class="hud-label">Время</div>
+          <div class="hud-value" id="timer">01:00</div>
+        </div>
+        <div class="hud-box best-box">
+          <div class="hud-label">Рекорд</div>
+          <div class="hud-value" id="best">0000</div>
+        </div>
+      </div>
+
+      <div class="statusline">
+        <div id="indicator">● Готово к запуску</div>
+        <div id="fps">FPS —</div>
+      </div>
+
+      <div class="overlay overlay-menu" id="menuOverlay">
+        <div class="overlay-card">
+          <div class="overlay-topline">Институт Цифры · КемГУ</div>
+          <h2>ЛОВИ КОД</h2>
+          <p>Собирай полезные плитки с кодом и избегай красных ошибок. Для управления можно использовать камеру или мышь.</p>
+          <div class="legend">
+            <div class="legend-item"><span class="legend-chip good">&lt;/&gt;</span> +10 очков за код</div>
+            <div class="legend-item"><span class="legend-chip bad">ERROR</span> −15 очков за ошибку</div>
+            <div class="legend-item"><span class="legend-chip combo">x5</span> бонус за серию без ошибок</div>
+          </div>
+          <div class="actions">
+            <button id="startCamera" class="primary">Играть с камерой</button>
+            <button id="startMouse" class="secondary">Играть мышью</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="overlay overlay-result hidden" id="resultOverlay">
+        <div class="overlay-card result-card">
+          <div class="overlay-topline">Раунд завершён</div>
+          <h2>ЛОВИ КОД</h2>
+          <div class="record-banner hidden" id="recordBanner">★ НОВЫЙ РЕКОРД! ★</div>
+          <div class="result-main" id="finalScore">0</div>
+          <div class="result-sub">Ваш результат</div>
+          <div class="result-grid">
+            <div><span>Лучший результат</span><strong id="resultBest">0</strong></div>
+            <div><span>Поймано кода</span><strong id="resultGood">0</strong></div>
+            <div><span>Ошибок</span><strong id="resultBad">0</strong></div>
+            <div><span>Лучшая серия</span><strong id="resultCombo">0</strong></div>
+          </div>
+          <p class="result-text">Ты только что управлял цифровой системой с помощью компьютерного зрения.</p>
+          <div class="actions">
+            <button id="playAgain" class="primary">Сыграть ещё</button>
+            <button id="backToMenu" class="secondary">В меню</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer-bar">
+      <div class="footer-hint" id="hint">Нажмите “Играть с камерой” или “Играть мышью”.</div>
+      <div class="camera-dock"><video id="camera" autoplay muted playsinline></video></div>
+      <div class="footer-actions">
+        <button id="fullscreen">На весь экран ⛶</button>
+        <button id="reset">Сброс</button>
+      </div>
+    </footer>
+  </main>
+
+  <script src="app.js?v=2.3"></script>
+</body>
+</html>
