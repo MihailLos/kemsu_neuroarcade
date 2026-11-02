@@ -11,6 +11,13 @@ const indicatorEl = document.getElementById('indicator');
 const fpsEl = document.getElementById('fps');
 const hintEl = document.getElementById('hint');
 const livesEl = document.getElementById('lives');
+const trainingEnabledEl = document.getElementById('trainingEnabled');
+const tutorialLayer = document.getElementById('tutorialLayer');
+const tutorialCard = document.getElementById('tutorialCard');
+const tutorialShade = document.getElementById('tutorialShade');
+const tutorialText = document.getElementById('tutorialText');
+const tutorialNext = document.getElementById('tutorialNext');
+const tutorialCountdown = document.getElementById('tutorialCountdown');
 const heartEls = Array.from({length:3},(_,i)=>document.getElementById('heart'+i));
 
 const resultBestEl = document.getElementById('resultBest');
@@ -34,7 +41,7 @@ const ROUND_PHASES = [
 const EXTRA_PHASE = {good:4, bad:2, gold:1, wide:0, time:0};
 let dpr = Math.min(window.devicePixelRatio || 1, 2);
 let currentMode = 'idle'; // idle camera mouse
-let state = 'menu'; // menu playing result
+let state = 'menu'; // menu training countdown playing result
 let handLandmarker = null;
 let videoStream = null;
 let lastDetect = 0;
@@ -65,6 +72,17 @@ let gameOverFlag = false;
 let boostUntil = 0;
 let recordCelebration = false;
 let lastTier = 0;
+let tutorial = null;
+const TUTORIAL_BLOCKS = ['good','gold','wide','time','bad'];
+const TUTORIAL_MESSAGES = {
+  good:'Этот блок даёт вам 10 очков. В обучении бонусов за серию нет. Поймайте блок платформой.',
+  gold:'Этот блок даёт вам 50 очков. Поймайте его платформой.',
+  wide:'Этот блок расширяет вашу платформу на 10 секунд. Поймайте его платформой.',
+  time:'Этот блок увеличивает общее время игры на 5 секунд. Поймайте его платформой.',
+  bad:'Этот блок уменьшает здоровье на 1 и количество очков на 15. Поймайте его, чтобы увидеть эффект.',
+  hearts:'После ловли красного блока здоровье уменьшается на 1 и включается защита сердца на 2 секунды. Во время защиты красные всё равно снимают очки и сбрасывают серию. При потере всех сердец игра заканчивается.',
+  hud:'Счёт — ваши собранные очки.\nВремя — оставшееся время игры.\nРекорд — лучший результат на этом компьютере. Побейте его, чтобы получить приз.'
+};
 
 const CODE_TOKENS = ['</>', '{}', 'var', 'AI', 'JS', 'if'];
 const ERROR_TOKENS = ['ERROR', '404', '!!!', 'BUG'];
@@ -230,7 +248,7 @@ async function startCameraMode(){
     }
     cameraEl.style.display = 'block';
     currentMode = 'camera';
-    startGame();
+    beginSession();
   }catch(err){
     console.error(err);
     setIndicator('Ошибка камеры');
@@ -243,24 +261,203 @@ function startMouseMode(){
   ensureAudio();
   currentMode = 'mouse';
   cameraEl.style.display = 'none';
-  startGame();
+  beginSession();
 }
 
-function startGame(){
+function beginSession(){
+  if(state === 'training' || state === 'countdown' || state === 'playing') return;
+  if(!canStartGame()) return;
+  if(trainingEnabledEl.checked) startTutorial(); else startGame();
+}
+
+function closeTutorial(){
+  tutorial = null;
+  tutorialLayer.classList.add('hidden');
+  tutorialCard.classList.remove('hidden');
+  tutorialCountdown.classList.add('hidden');
+  document.getElementById('scoreLabel').textContent = 'Счёт';
+}
+
+function startTutorial(){
+  if(!canStartGame()) return;
+  resetRoundState();
+  state = 'training';
+  tutorial = {step:'move', moveSeconds:0, caught:false, feedback:0, countdown:3};
+  menuOverlay.classList.add('hidden');
+  resultOverlay.classList.add('hidden');
+  tutorialLayer.classList.remove('hidden');
+  tutorialCard.classList.remove('hidden');
+  tutorialCountdown.classList.add('hidden');
+  document.getElementById('scoreLabel').textContent = 'Учебный счёт';
+  showTutorialStep('move');
+  setIndicator('Обучение');
+  hintEl.textContent = 'Учебные очки не влияют на рекорд. Обучение можно пропустить.';
+  updateHud();
+}
+
+function showTutorialStep(step){
+  if(!tutorial || state !== 'training') return;
+  tutorial.step = step;
+  tutorial.caught = false;
+  tutorial.feedback = 0;
+  objects = [];
+  tutorialNext.classList.toggle('hidden',step !== 'hearts' && step !== 'hud');
+  tutorialShade.classList.toggle('hidden',step === 'move');
+  tutorialText.textContent = step === 'move' ?
+    `Почувствуйте движение платформы ${currentMode === 'camera' ? 'ладонью' : 'мышью'}. Через 5 секунд появится первый блок.` : TUTORIAL_MESSAGES[step];
+  const steps = ['move',...TUTORIAL_BLOCKS,'hearts','hud'];
+  document.getElementById('tutorialProgress').textContent = `Обучение · ${steps.indexOf(step)+1} из ${steps.length}`;
+  if(TUTORIAL_BLOCKS.includes(step)) spawnTutorialBlock();
+  positionTutorial();
+}
+
+function spawnTutorialBlock(){
+  if(!tutorial || !TUTORIAL_BLOCKS.includes(tutorial.step)) return;
+  spawnObject({kind:tutorial.step,tier:0});
+  const obj = objects[objects.length-1];
+  obj.x = canvas.clientWidth*.5;
+  obj.speed = (player.y*canvas.clientHeight+50)/5;
+  obj.rot = obj.spin = 0;
+}
+
+function tutorialCaught(){
+  if(!tutorial) return;
+  if(tutorial.step === 'bad'){
+    showTutorialStep('hearts');
+    return;
+  }
+  tutorial.caught = true;
+  tutorial.feedback = 1.2;
+  tutorialText.textContent = 'Поймано! ' + TUTORIAL_MESSAGES[tutorial.step].replace(' Поймайте блок платформой.','').replace(' Поймайте его платформой.','');
+}
+
+function nextTutorial(){
+  if(state !== 'training' || !tutorial) return;
+  if(tutorial.step === 'hearts') showTutorialStep('hud');
+  else if(tutorial.step === 'hud') startCountdown();
+}
+
+function startCountdown(){
+  if(state !== 'training' || !tutorial) return;
+  state = 'countdown';
+  objects = [];
+  particles = [];
+  floaterTexts = [];
+  tutorial.countdown = 3;
+  lastFrame = performance.now();
+  tutorialCard.classList.add('hidden');
+  tutorialShade.classList.remove('hidden');
+  tutorialCountdown.classList.remove('hidden');
+  tutorialCountdown.textContent = '3';
+  setIndicator('Приготовьтесь');
+  hintEl.textContent = 'Сейчас начнётся зачётный раунд. Учебные очки и бонусы будут сброшены.';
+  updateHearts();
+  positionTutorial();
+}
+
+function advanceTutorial(seconds,w,h){
+  if(document.hidden) return;
+  while(seconds > 1e-9 && tutorial && (state === 'training' || state === 'countdown')){
+    const dt = Math.min(.05,seconds);
+    seconds -= dt;
+    if(state === 'countdown'){
+      tutorial.countdown = Math.max(0,tutorial.countdown-dt);
+      if(tutorial.countdown <= 1e-9){
+        if(recordsReady && !recordSaving) startGame();
+        else {
+          tutorialCountdown.textContent = '…';
+          hintEl.textContent = 'Ждём локальный сервер и файл рекорда. Проверьте, что сервер запущен.';
+        }
+        return;
+      }
+      const number = String(Math.ceil(tutorial.countdown-1e-9));
+      if(tutorialCountdown.textContent !== number) tutorialCountdown.textContent = number;
+      continue;
+    }
+    elapsed += dt;
+    if(tutorial.step === 'move'){
+      tutorial.moveSeconds += dt;
+      if(tutorial.moveSeconds >= 5-1e-9) showTutorialStep('good');
+    } else if(TUTORIAL_BLOCKS.includes(tutorial.step)){
+      if(tutorial.caught){
+        tutorial.feedback -= dt;
+        if(tutorial.feedback <= 1e-9){
+          const index = TUTORIAL_BLOCKS.indexOf(tutorial.step);
+          showTutorialStep(TUTORIAL_BLOCKS[index+1]);
+        }
+      } else {
+        updateObjects(dt,w,h);
+        // Пропущенный блок повторяется; учебный шаг нельзя потерять.
+        if(tutorial && !tutorial.caught && TUTORIAL_BLOCKS.includes(tutorial.step) && objects.length === 0){
+          spawnTutorialBlock();
+        }
+      }
+    }
+  }
+  updateHud();
+}
+
+function tutorialTarget(){
+  if(!tutorial || state === 'countdown' || tutorial.step === 'move') return null;
+  if(objects.length){
+    const obj = objects[0];
+    return {x:obj.x-obj.w/2-12,y:obj.y-obj.h/2-12,width:obj.w+24,height:obj.h+24};
+  }
+  const id = tutorial.step === 'hearts' ? 'lives' : tutorial.step === 'hud' ? 'hud' :
+    tutorial.step === 'time' ? 'timer' : 'score';
+  const rect = document.getElementById(id).getBoundingClientRect();
+  const shell = playShell.getBoundingClientRect();
+  return {x:rect.left-shell.left-8,y:rect.top-shell.top-8,width:rect.width+16,height:rect.height+16};
+}
+
+function positionTutorial(){
+  if(!tutorial) return;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const target = tutorialTarget();
+  const hole = document.getElementById('tutorialHole');
+  for(const [name,value] of Object.entries({x:target?.x || 0,y:target?.y || 0,width:target?.width || 0,height:target?.height || 0})){
+    hole.setAttribute(name,String(value));
+  }
+  if(state === 'countdown') return;
+  const card = tutorialCard.getBoundingClientRect();
+  let x = (w-card.width)/2;
+  let y = Math.min(190,h*.3);
+  if(target){
+    if(target.x+target.width+card.width+28 < w){
+      x = target.x+target.width+16;
+      y = target.y;
+    } else if(target.x-card.width-16 > 8){
+      x = target.x-card.width-16;
+      y = target.y;
+    } else {
+      y = target.y-card.height-16;
+      if(y < 8) y = target.y+target.height+16;
+    }
+  }
+  tutorialCard.style.left = clamp(x,8,Math.max(8,w-card.width-8))+'px';
+  tutorialCard.style.top = clamp(y,8,Math.max(8,h-card.height-8))+'px';
+}
+
+function canStartGame(){
   if(recordSaving){
     alert('Дождитесь сохранения результата.');
-    return;
+    return false;
   }
   if(!recordsReady){
     alert('Файл рекорда ещё не загружен. Проверьте работу локального сервера.');
-    return;
+    return false;
   }
+  return true;
+}
+
+function resetRoundState(){
   objects = [];
   particles = [];
   floaterTexts = [];
   elapsed = 0;
   bonusSeconds = 0;
-  spawnPlan = createSpawnPlan();
+  spawnPlan = [];
   spawnIndex = 0;
   lastFrame = performance.now();
   streak = 0;
@@ -275,8 +472,15 @@ function startGame(){
   lastTier = 0;
   player.x = player.targetX = 0.5;
   player.hitFlash = player.badFlash = 0;
-  updateHud();
+}
+
+function startGame(){
+  if(!canStartGame()) return;
+  closeTutorial();
+  resetRoundState();
+  spawnPlan = createSpawnPlan();
   state = 'playing';
+  updateHud();
   menuOverlay.classList.add('hidden');
   resultOverlay.classList.add('hidden');
   setIndicator(currentMode === 'camera' ? 'Покажи ладонь камере' : 'Управление мышью');
@@ -285,7 +489,7 @@ function startGame(){
 }
 
 async function finishGame(){
-  if(gameOverFlag) return;
+  if(state !== 'playing' || gameOverFlag) return;
   state = 'result';
   gameOverFlag = true;
   soundEnd();
@@ -321,6 +525,7 @@ async function finishGame(){
 }
 
 function backToMenu(){
+  closeTutorial();
   state = 'menu';
   resetLives();
   menuOverlay.classList.remove('hidden');
@@ -352,7 +557,7 @@ function resetLives(){
 }
 
 function updateHearts(){
-  const shielded = state === 'playing' && lives > 0 && elapsed < heartShieldUntil-1e-9;
+  const shielded = (state === 'playing' || state === 'training') && lives > 0 && elapsed < heartShieldUntil-1e-9;
   heartEls.forEach((heart,i)=>{
     heart.classList.toggle('is-empty',i >= lives);
     heart.classList.toggle('just-lost',i === lastLostHeart);
@@ -367,7 +572,7 @@ function updateHud(){
   scoreEl.textContent = pad4(score);
   bestEl.textContent = pad4(bestScore);
   resultBestEl.textContent = bestScore;
-  const timeLeft = Math.ceil(Math.max(0, GAME_SECONDS + bonusSeconds - elapsed - 1e-9));
+  const timeLeft = Math.ceil(Math.max(0, GAME_SECONDS + bonusSeconds - (state === 'training' || state === 'countdown' ? 0 : elapsed) - 1e-9));
   const mm = String(Math.floor(timeLeft / 60)).padStart(2,'0');
   const ss = String(Math.floor(timeLeft % 60)).padStart(2,'0');
   timerEl.textContent = `${mm}:${ss}`;
@@ -470,7 +675,7 @@ function addFloater(text,x,y,color){
   floaterTexts.push({text,x,y,life:0,ttl:1,color});
 }
 
-canvas.addEventListener('pointermove', (e)=>{
+playShell.addEventListener('pointermove', (e)=>{
   if(currentMode !== 'mouse') return;
   const r = canvas.getBoundingClientRect();
   player.targetX = clamp((e.clientX - r.left) / r.width, 0, 1);
@@ -595,8 +800,8 @@ function drawObject(obj){
 
 function updateObjects(dt,w,h){
   const tier = Math.min(3, Math.floor(elapsed / 15));
-  if(tier > lastTier){ lastTier=tier; addFloater('УРОВЕНЬ '+(tier+1),w*.5,h*.39,'#b76a00'); soundCombo(); }
-  while(spawnIndex < spawnPlan.length && spawnPlan[spawnIndex].at <= elapsed+1e-9 &&
+  if(state === 'playing' && tier > lastTier){ lastTier=tier; addFloater('УРОВЕНЬ '+(tier+1),w*.5,h*.39,'#b76a00'); soundCombo(); }
+  while(state === 'playing' && spawnIndex < spawnPlan.length && spawnPlan[spawnIndex].at <= elapsed+1e-9 &&
         spawnPlan[spawnIndex].bonusRequired <= bonusSeconds){
     spawnObject(spawnPlan[spawnIndex++]);
   }
@@ -627,6 +832,7 @@ function updateObjects(dt,w,h){
       catchObject(obj);
       objects.splice(i,1);
       updateHud();
+      if(state === 'training'){ tutorialCaught(); return; }
       if(state !== 'playing') return;
       continue;
     }
@@ -638,7 +844,7 @@ function updateObjects(dt,w,h){
 }
 
 function catchObject(obj){
-  if(state !== 'playing') return;
+  if(state !== 'playing' && state !== 'training') return;
   if(obj.kind === 'bad'){
     score = Math.max(0, score - 15);
     badCaught++;
@@ -652,7 +858,7 @@ function catchObject(obj){
       lastLostHeart = lives;
       heartShieldUntil = lives > 0 ? elapsed + HEART_SHIELD_SECONDS : 0;
       updateHearts();
-      if(lives === 0) finishGame();
+      if(lives === 0 && state === 'playing') finishGame();
     }
     return;
   }
@@ -680,7 +886,7 @@ function catchObject(obj){
     if(obj.kind === 'gold') soundCombo(); else soundCatch();
   }
   // Любой полезный блок завершает пятёрку: код, золото, расширение или время.
-  if(streak % 5 === 0){
+  if(state === 'playing' && streak % 5 === 0){
     score += 20;
     addFloater(`СЕРИЯ x${streak}  +20`,obj.x,obj.y-24,'#b76a00');
     addParticles(obj.x,obj.y,'#ffb900',26);
@@ -755,11 +961,13 @@ function render(timestamp){
   drawBackground(timestamp, w, h);
 
   if(state === 'playing') advanceGame(frameSeconds,w,h);
+  else if(state === 'training' || state === 'countdown') advanceTutorial(Math.min(frameSeconds,.1),w,h);
 
   updateParticles(dt);
   drawPlayer(w, h, dt);
   for(const obj of objects) drawObject(obj);
   drawParticles();
+  if(tutorial) positionTutorial();
 
   frameTimes.push(timestamp);
   while(frameTimes.length && timestamp - frameTimes[0] > 1000) frameTimes.shift();
@@ -770,6 +978,8 @@ function render(timestamp){
 
 requestAnimationFrame(render);
 
+tutorialNext.addEventListener('click', nextTutorial);
+document.getElementById('tutorialSkip').addEventListener('click', startCountdown);
 document.getElementById('startCamera').addEventListener('click', startCameraMode);
 document.getElementById('startMouse').addEventListener('click', startMouseMode);
 document.getElementById('playAgain').addEventListener('click', ()=>{

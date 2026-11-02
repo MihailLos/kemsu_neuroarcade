@@ -14,7 +14,7 @@ function fixture(initial = 100){
       const classes = new Set(['hidden']);
       const attributes = new Map();
       elements.set(id, {
-        textContent: '', style: {}, clientWidth:800, clientHeight:600,
+        textContent: '', style: {}, checked:id==='trainingEnabled', clientWidth:800, clientHeight:600,
         getAttribute: name=>attributes.get(name) ?? null,
         setAttribute: (name,value)=>attributes.set(name,String(value)),
         classList: {
@@ -23,7 +23,7 @@ function fixture(initial = 100){
           toggle(name, hidden){ if(hidden) classes.add(name); else classes.delete(name); }
         },
         getContext: ()=>({setTransform(){}}),
-        getBoundingClientRect: ()=>({width: 800, height: 600}),
+        getBoundingClientRect: ()=>({left:0,top:0,width:800,height:600}),
         addEventListener(){}
       });
     }

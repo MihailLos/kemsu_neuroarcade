@@ -52,7 +52,7 @@
 
       <div class="hud" id="hud">
         <div class="hud-box score-box">
-          <div class="hud-label">Счёт</div>
+          <div class="hud-label" id="scoreLabel">Счёт</div>
           <div class="hud-value" id="score">0000</div>
         </div>
         <div class="hud-box timer-box">
@@ -74,18 +74,35 @@
         <div class="overlay-card">
           <div class="overlay-topline">Институт Цифры · КемГУ</div>
           <h2>ЛОВИ КОД</h2>
-          <p>Собирай полезные плитки с кодом и избегай красных ошибок. Для управления можно использовать камеру или мышь. У тебя 3 жизни. Раунд заканчивается, когда они иссякнут или выйдет время: 60 секунд, до 80 с бонусами.</p>
+          <p>Ловите полезный код и избегайте красных ошибок. У вас 3 жизни и 60 секунд; с бонусами времени — до 80 секунд.</p>
           <div class="legend">
             <div class="legend-item"><span class="legend-chip good">&lt;/&gt;</span> +10 очков за код</div>
             <div class="legend-item"><span class="legend-chip bad">ERROR</span> −15 очков и −1 жизнь; защита сердца — 2 секунды</div>
             <div class="legend-item"><span class="legend-chip combo">x5</span> +20 очков за каждые 5 полезных блоков подряд</div>
             <div class="legend-item"><span class="legend-chip time">+5 СЕК</span> дополнительное время, максимум +20 секунд</div>
           </div>
+          <label class="training-option"><input type="checkbox" id="trainingEnabled" checked> Обучение перед игрой</label>
           <div class="actions">
             <button id="startCamera" class="primary">Играть с камерой</button>
             <button id="startMouse" class="secondary">Играть мышью</button>
           </div>
         </div>
+      </div>
+
+      <div class="tutorial-layer hidden" id="tutorialLayer" role="region" aria-label="Обучение">
+        <svg class="tutorial-shade" id="tutorialShade" aria-hidden="true">
+          <defs><mask id="tutorialMask" maskUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="white"/><rect id="tutorialHole" x="0" y="0" width="0" height="0" rx="16" fill="black"/></mask></defs>
+          <rect width="100%" height="100%" fill="rgba(4,26,60,.78)" mask="url(#tutorialMask)"/>
+        </svg>
+        <div class="tutorial-card" id="tutorialCard">
+          <div class="overlay-topline" id="tutorialProgress">Обучение</div>
+          <p id="tutorialText" aria-live="polite"></p>
+          <div class="tutorial-actions">
+            <button class="primary hidden" id="tutorialNext">Далее</button>
+            <button class="secondary" id="tutorialSkip">Пропустить обучение</button>
+          </div>
+        </div>
+        <div class="tutorial-countdown hidden" id="tutorialCountdown" role="status" aria-live="polite"></div>
       </div>
 
       <div class="overlay overlay-result hidden" id="resultOverlay">
