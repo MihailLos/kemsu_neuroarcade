@@ -391,7 +391,7 @@ function trailingBad(kinds, initial = 0){
   return run;
 }
 
-function createPhaseKinds(counts, previousBad){
+function createPhaseKinds(counts, previousBad, maxTimeIndex = Infinity){
   const ordinary = [...Array(counts.good).fill('good'), ...Array(counts.bad).fill('bad')];
   const specials = shuffled([
     ...Array(counts.gold).fill('gold'), ...Array(counts.wide).fill('wide'),
@@ -402,7 +402,8 @@ function createPhaseKinds(counts, previousBad){
   // Разносим бонусы по отдельным участкам этапа, а не собираем в одной точке.
   specials.forEach((kind,i)=>{
     const from = Math.floor(i*count/specials.length);
-    const to = Math.floor((i+1)*count/specials.length);
+    const end = Math.floor((i+1)*count/specials.length);
+    const to = kind === 'time' ? Math.min(end,maxTimeIndex+1) : end;
     slots[from + Math.floor(Math.random()*(to-from))] = kind;
   });
   for(let attempt=0;attempt<100;attempt++){
@@ -426,12 +427,20 @@ function createSpawnPlan(){
   let previousBad = 0;
   const phases = [...ROUND_PHASES, ...Array(4).fill(EXTRA_PHASE)];
   phases.forEach((counts,phase)=>{
-    const kinds = createPhaseKinds(counts,previousBad);
+    const tier = Math.min(phase,3);
+    const flightSeconds = 3 / (1 + tier*.17);
+    const start = phase < 4 ? Math.max(3,phase*15) : GAME_SECONDS+(phase-4)*5;
+    const end = phase < 4 ? (phase+1)*15 : start+5;
+    const count = Object.values(counts).reduce((sum,n)=>sum+n,0);
+    const interval = (end-start)/count;
+    // Все блоки времени доступны до начала появления блоков продления.
+    const maxTimeIndex = Math.floor((GAME_SECONDS-2.5-start)/interval);
+    const kinds = createPhaseKinds(counts,previousBad,maxTimeIndex);
     previousBad = trailingBad(kinds,previousBad);
-    const start = phase < 4 ? phase*15 : GAME_SECONDS+(phase-4)*5;
-    const end = phase < 4 ? Math.min(start+14, GAME_SECONDS-4) : start+2.8;
     kinds.forEach((kind,i)=>{
-      plan.push({kind, at:start+(end-start)*i/(kinds.length-1), tier:Math.min(phase,3)});
+      const catchAt = start+interval*i;
+      plan.push({kind, at:catchAt-flightSeconds, catchAt, tier, phase,
+                 bonusRequired:Math.max(0,(phase-3)*TIME_BONUS_SECONDS)});
     });
   });
   return plan;
@@ -588,7 +597,7 @@ function updateObjects(dt,w,h){
   const tier = Math.min(3, Math.floor(elapsed / 15));
   if(tier > lastTier){ lastTier=tier; addFloater('УРОВЕНЬ '+(tier+1),w*.5,h*.39,'#b76a00'); soundCombo(); }
   while(spawnIndex < spawnPlan.length && spawnPlan[spawnIndex].at <= elapsed+1e-9 &&
-        spawnPlan[spawnIndex].at < GAME_SECONDS + bonusSeconds - 1e-9){
+        spawnPlan[spawnIndex].bonusRequired <= bonusSeconds){
     spawnObject(spawnPlan[spawnIndex++]);
   }
 

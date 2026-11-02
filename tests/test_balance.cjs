@@ -20,7 +20,7 @@ function checkPlan(plan){
     if(i) assert.ok(plan[i].at > plan[i-1].at);
   }
   for(let phase=0;phase<4;phase++){
-    const entries = plan.filter(item=>item.at >= phase*15 && item.at < (phase+1)*15);
+    const entries = plan.filter(item=>item.phase === phase);
     assert.deepEqual(counts(entries),expected[phase]);
     const specials = entries.filter(item=>!['bad','good'].includes(item.kind));
     // Каждый участок этапа содержит ровно один бонус.
@@ -31,10 +31,10 @@ function checkPlan(plan){
     });
   }
   assert.equal(plan.filter(item=>item.kind==='time').length,4);
-  assert.ok(plan.filter(item=>item.kind==='time').every(item=>item.at <= 56));
-  assert.equal(plan.filter(item=>item.at < 60).length,93);
+  assert.ok(plan.filter(item=>item.kind==='time').every(item=>item.catchAt <= 57.5));
+  assert.equal(plan.filter(item=>item.phase < 4).length,93);
   for(let start=60;start<80;start+=5){
-    const entries = plan.filter(item=>item.at>=start && item.at<start+5);
+    const entries = plan.filter(item=>item.catchAt>=start && item.catchAt<start+5);
     assert.deepEqual(counts(entries),{good:4,bad:2,gold:1,wide:0,time:0});
   }
 }
@@ -77,7 +77,7 @@ test('без пойманного времени раунд заканчивае
     assert.equal(app.run('elapsed'),60);
     assert.equal(app.run('state'),'result');
     assert.equal(app.run('spawned.length'),93);
-    assert.ok(app.run('spawned.every(entry=>entry.at<60)'));
+    assert.ok(app.run('spawned.every(entry=>entry.phase<4)'));
   }
 });
 
@@ -146,8 +146,47 @@ test('последние блоки каждого доступного этап
     for(const entry of snapshot(app.run('spawnPlan'))){
       app.run(`spawnObject(${JSON.stringify(entry)})`);
       const flight = app.run(`(player.y*${height}+50)/objects[objects.length-1].speed`);
-      const deadline = entry.at<60 ? 60 : 60+5*(Math.floor((entry.at-60)/5)+1);
+      const deadline = entry.phase<4 ? 60 : 60+(entry.phase-3)*5;
       assert.ok(entry.at+flight < deadline);
     }
+  }
+});
+
+test('нет многосекундных пауз между этапами и внутри продления', async ()=>{
+  const app = await simulation();
+  for(let attempt=0;attempt<100;attempt++){
+    const plan = snapshot(app.run('createSpawnPlan()'));
+    for(let i=1;i<plan.length;i++){
+      assert.ok(plan[i].at-plan[i-1].at <= 1.1, `пауза перед блоком ${i}`);
+      assert.ok(plan[i].catchAt-plan[i-1].catchAt <= .72, `пауза в подлёте перед блоком ${i}`);
+    }
+    const extras = plan.filter(entry=>entry.phase>=4);
+    for(let i=1;i<extras.length;i++){
+      assert.ok(Math.abs(extras[i].at-extras[i-1].at-5/7)<1e-9);
+    }
+    assert.ok(plan.filter(entry=>entry.kind==='time').every(entry=>entry.catchAt<extras[0].at));
+  }
+});
+
+test('даже последний блок времени открывает продление без залпа просроченных блоков', async ()=>{
+  for(let caught=0;caught<=4;caught++){
+    const app = await simulation();
+    app.run(`
+      let appeared = [];
+      spawnObject = entry=>appeared.push({phase:entry.phase, at:elapsed});
+      advanceGame(57.5,800,600);
+    `);
+    assert.ok(app.run('appeared.every(entry=>entry.phase<4)'));
+    app.run(`
+      for(let i=0;i<${caught};i++) catchObject({kind:'time',x:0,y:0});
+      advanceGame(30,800,600);
+    `);
+    const appeared = snapshot(app.run('appeared'));
+    assert.equal(appeared.length,93+caught*7);
+    for(let i=1;i<appeared.length;i++){
+      assert.ok(appeared[i].at-appeared[i-1].at>.45, 'несколько блоков появились залпом');
+      assert.ok(appeared[i].at-appeared[i-1].at<=1.15, 'возникла пауза');
+    }
+    assert.equal(app.run('elapsed'),60+caught*5);
   }
 });
