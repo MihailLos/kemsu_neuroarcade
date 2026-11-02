@@ -1,0 +1,21 @@
+# MediaPipe скачивается скриптами SETUP_*.
+/assets/
+
+# Личные результаты; пустая папка остаётся в репозитории.
+/data/*
+!/data/.gitkeep
+
+# Python и локальные окружения.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Незавершённые загрузки, журналы и файлы ОС/редакторов.
+*.tmp
+*.log
+*.swp
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
