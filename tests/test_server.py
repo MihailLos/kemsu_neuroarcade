@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 import server
 server.RECORD_FILE = Path(sys.argv[2]) / 'data' / 'records.json'
-httpd = server.ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
+httpd = server.create_server(port=0)
 server.PORT = httpd.server_port
 print(server.PORT, flush=True)
 httpd.serve_forever()
@@ -66,6 +66,7 @@ class ServerTests(unittest.TestCase):
                 self.assertIn('no-store', headers['Cache-Control'])
 
     def test_first_run_without_data_directory(self):
+        self.assertEqual(json.loads(self.record.read_text()), {'bestScore': 0})
         status, body, _ = self.request()
         self.assertEqual((status, json.loads(body)), (200, {'bestScore': 0}))
         self.assertEqual(json.loads(self.record.read_text()), {'bestScore': 0})
@@ -108,9 +109,30 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(all(status == 200 for status, _ in responses))
         self.assertEqual(json.loads(self.record.read_text()), {'bestScore': 700})
 
+    def test_manual_edit_is_read_without_restart(self):
+        self.post(950)
+        self.record.write_text('{"bestScore": 100}', encoding='utf-8')
+        status, body, _ = self.request()
+        self.assertEqual((status, json.loads(body)), (200, {'bestScore': 100}))
+        self.assertEqual(self.post(50), (200, {'bestScore': 100}))
+        self.stop_server()
+        self.start_server()
+        self.assertEqual(json.loads(self.request()[1]), {'bestScore': 100})
+
+    def test_windows_utf8_bom(self):
+        self.record.write_text('{"bestScore": 120}', encoding='utf-8-sig')
+        self.assertEqual(json.loads(self.request()[1]), {'bestScore': 120})
+        self.assertEqual(self.post(130), (200, {'bestScore': 130}))
+
+    def test_deleted_record_is_recreated(self):
+        self.post(950)
+        self.record.unlink()
+        self.assertEqual(json.loads(self.request()[1]), {'bestScore': 0})
+        self.assertEqual(json.loads(self.record.read_text()), {'bestScore': 0})
+
     def test_corrupt_record_is_not_overwritten(self):
-        self.record.parent.mkdir()
-        for content in ('{', '{"bestScore": -1}', '{"bestScore": true}', '{}'):
+        self.record.parent.mkdir(exist_ok=True)
+        for content in ('{', '{"bestScore": -1}', '{"bestScore": true}', '{"bestScore": 1000000001}', '{}'):
             with self.subTest(content=content):
                 self.record.write_text(content, encoding='utf-8')
                 self.assertEqual(self.request()[0], 500)

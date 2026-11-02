@@ -18,9 +18,10 @@ def read_best():
     if not RECORD_FILE.exists():
         save_best(0)
         return 0
-    data = json.loads(RECORD_FILE.read_text(encoding='utf-8'))
+    # Редакторы Windows могут добавлять BOM в начало UTF-8-файла.
+    data = json.loads(RECORD_FILE.read_text(encoding='utf-8-sig'))
     score = data['bestScore']
-    if type(score) is not int or score < 0:
+    if type(score) is not int or not (0 <= score <= 1_000_000_000):
         raise ValueError('Некорректный рекорд')
     return score
 
@@ -97,6 +98,18 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply_json(500, {'error':'Не удалось сохранить рекорд'})
 
 
+def create_server(host='127.0.0.1', port=PORT):
+    httpd = ThreadingHTTPServer((host, port), Handler)
+    try:
+        with lock:
+            read_best()
+    except Exception:
+        httpd.server_close()
+        raise
+    return httpd
+
+
 if __name__ == '__main__':
+    httpd = create_server()
     print(f'Игра: http://127.0.0.1:{PORT} (завершить: Ctrl+C)', flush=True)
-    ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
+    httpd.serve_forever()

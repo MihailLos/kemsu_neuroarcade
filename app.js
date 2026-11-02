@@ -18,7 +18,6 @@ const resultComboEl = document.getElementById('resultCombo');
 const finalScoreEl = document.getElementById('finalScore');
 
 const GAME_SECONDS = 60;
-const STORAGE_KEY = 'digit_lovi_kod_best_v2';
 let dpr = Math.min(window.devicePixelRatio || 1, 2);
 let currentMode = 'idle'; // idle camera mouse
 let state = 'menu'; // menu playing result
@@ -45,7 +44,6 @@ let bestScore = 0;
 let recordsReady = false;
 let gameOverFlag = false;
 let boostUntil = 0;
-let previousBest = bestScore;
 let recordCelebration = false;
 let lastTier = 0;
 
@@ -54,49 +52,91 @@ const ERROR_TOKENS = ['ERROR', '404', '!!!', 'BUG'];
 
 bestEl.textContent = pad4(bestScore);
 
-async function loadRecord(){
-  try {
-    const response = await fetch('/api/record', {cache:'no-store'});
-    if(!response.ok) throw new Error('HTTP ' + response.status);
-    const data = await response.json();
-    bestScore = Number.isSafeInteger(data.bestScore) ? Math.max(0,data.bestScore) : 0;
-    // Однократный перенос результата из старой версии, сохранённого браузером.
-    let legacy = 0;
-    try { legacy = Number(localStorage.getItem(STORAGE_KEY)) || 0; } catch (_) {}
-    if(Number.isSafeInteger(legacy) && legacy > bestScore){
-      const saveResponse = await fetch('/api/record', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({score:legacy})
-      });
-      if(!saveResponse.ok) throw new Error('Ошибка переноса рекорда');
-      bestScore = (await saveResponse.json()).bestScore;
-    }
-    recordsReady = true;
-    updateHud();
-  } catch (err) {
-    console.error('Ошибка файла рекорда:',err);
-    hintEl.textContent = 'Не удалось прочитать файл рекорда. Проверьте сервер и права записи.';
-    setIndicator('Ошибка файла рекорда');
-  }
+// Запросы идут последовательно: запоздалое чтение не отменит результат записи.
+let recordQueue = Promise.resolve();
+let recordLoading = null;
+let recordSaving = false;
+let recordError = false;
+
+function queueRecord(task){
+  const operation = recordQueue.then(task);
+  recordQueue = operation.catch(()=>{});
+  return operation;
 }
 
-async function saveRecord(value){
+async function requestRecord(options = {}){
+  const controller = new AbortController();
+  const timeout = setTimeout(()=>controller.abort(), 5000);
   try {
     const response = await fetch('/api/record', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({score:value})
+      ...options, cache:'no-store', signal:controller.signal
     });
     if(!response.ok) throw new Error('HTTP ' + response.status);
     const data = await response.json();
+    if(!Number.isSafeInteger(data.bestScore) || data.bestScore < 0 || data.bestScore > 1_000_000_000){
+      throw new Error('Некорректный рекорд в ответе сервера');
+    }
     bestScore = data.bestScore;
+    if(state === 'result' && recordCelebration && bestScore !== score){
+      recordCelebration = false;
+      document.getElementById('recordBanner').classList.add('hidden');
+    }
+    recordsReady = true;
+    if(recordError){
+      recordError = false;
+      setIndicator(state === 'result' ? 'Раунд завершён' : 'Рекорд загружен');
+      hintEl.textContent = state === 'result' ? 'Можно сыграть ещё раз или вернуться в меню.' :
+        state === 'playing' ? (currentMode === 'camera' ? 'Для лучшего результата держите ладонь перед камерой.' : 'Двигайте мышью влево и вправо.') :
+        'Нажмите “Играть с камерой” или “Играть мышью”.';
+    }
     updateHud();
-  } catch (err) {
-    console.error('Не удалось сохранить рекорд:',err);
-    hintEl.textContent = 'Ошибка записи рекорда в data/records.json. Проверьте права доступа к папке.';
-    setIndicator('Рекорд не сохранён');
+    return bestScore;
+  } finally {
+    clearTimeout(timeout);
   }
 }
+
+function loadRecord(){
+  if(recordLoading) return recordLoading;
+  recordLoading = queueRecord(async ()=>{
+    try {
+      return await requestRecord();
+    } catch (err) {
+      recordsReady = false;
+      recordError = true;
+      console.error('Ошибка файла рекорда:',err);
+      hintEl.textContent = 'Не удалось прочитать файл рекорда. Проверьте сервер и data/records.json.';
+      setIndicator('Ошибка файла рекорда');
+      return null;
+    }
+  }).finally(()=>{ recordLoading = null; });
+  return recordLoading;
+}
+
+function saveRecord(value){
+  return queueRecord(async ()=>{
+    try {
+      return await requestRecord({
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({score:value})
+      });
+    } catch (err) {
+      recordError = true;
+      console.error('Не удалось сохранить рекорд:',err);
+      hintEl.textContent = 'Ошибка записи рекорда в data/records.json. Проверьте права доступа к папке.';
+      setIndicator('Рекорд не сохранён');
+      return null;
+    }
+  });
+}
+
+function refreshRecord(){
+  if(!document.hidden && !recordSaving) return loadRecord();
+}
 loadRecord();
+setInterval(refreshRecord, 2000);
+window.addEventListener('focus', refreshRecord);
+document.addEventListener('visibilitychange', refreshRecord);
 
 function pad4(n){ return String(Math.max(0, Math.round(n))).padStart(4,'0'); }
 function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
@@ -188,6 +228,10 @@ function startMouseMode(){
 }
 
 function startGame(){
+  if(recordSaving){
+    alert('Дождитесь сохранения результата.');
+    return;
+  }
   if(!recordsReady){
     alert('Файл рекорда ещё не загружен. Проверьте работу локального сервера.');
     return;
@@ -204,7 +248,6 @@ function startGame(){
   score = 0;
   gameOverFlag = false;
   boostUntil = 0;
-  previousBest = bestScore;
   recordCelebration = false;
   lastTier = 0;
   player.x = player.targetX = 0.5;
@@ -218,16 +261,12 @@ function startGame(){
   soundStart();
 }
 
-function finishGame(){
+async function finishGame(){
   state = 'result';
   gameOverFlag = true;
   soundEnd();
-  recordCelebration = score > previousBest && score > 0;
-  if(recordCelebration){
-    bestScore = score;
-    saveRecord(bestScore);
-    soundRecord();
-  }
+  recordSaving = true;
+  recordCelebration = false;
   updateHud();
   finalScoreEl.textContent = score;
   resultBestEl.textContent = bestScore;
@@ -238,6 +277,22 @@ function finishGame(){
   resultOverlay.classList.remove('hidden');
   setIndicator('Раунд завершён');
   hintEl.textContent = 'Можно сыграть ещё раз или вернуться в меню.';
+
+  try {
+    // Сравниваем с файлом, а отправляем только счёт этого раунда, не старый максимум.
+    const before = await loadRecord();
+    if(before === null) return;
+    const saved = await saveRecord(score);
+    if(saved === null) return;
+    recordCelebration = score > before && saved === score;
+    if(state === 'result'){
+      document.getElementById('recordBanner').classList.toggle('hidden', !recordCelebration);
+      if(recordCelebration) soundRecord();
+    }
+  } finally {
+    recordSaving = false;
+  }
+
 }
 
 function backToMenu(){
@@ -266,6 +321,7 @@ function fullReset(){
 function updateHud(){
   scoreEl.textContent = pad4(score);
   bestEl.textContent = pad4(bestScore);
+  resultBestEl.textContent = bestScore;
   const timeLeft = Math.max(0, GAME_SECONDS - elapsed);
   const mm = String(Math.floor(timeLeft / 60)).padStart(2,'0');
   const ss = String(Math.floor(timeLeft % 60)).padStart(2,'0');
@@ -570,7 +626,6 @@ requestAnimationFrame(render);
 document.getElementById('startCamera').addEventListener('click', startCameraMode);
 document.getElementById('startMouse').addEventListener('click', startMouseMode);
 document.getElementById('playAgain').addEventListener('click', ()=>{
-  resultOverlay.classList.add('hidden');
   if(currentMode === 'camera') startCameraMode(); else startMouseMode();
 });
 document.getElementById('backToMenu').addEventListener('click', backToMenu);
