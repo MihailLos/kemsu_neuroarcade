@@ -1,59 +1,8 @@
 // Регрессии клиентской работы с рекордом. Только встроенные модули Node.js.
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
 const {test} = require('node:test');
-const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const {fixture, source} = require('./helpers/game.cjs');
 
-function fixture(initial = 100){
-  const elements = new Map();
-  const intervals = [];
-  const events = {};
-  const calls = [];
-  const model = {best: initial, failPost: false, invalid: false, beforeGet: null};
-  function element(id){
-    if(!elements.has(id)){
-      const classes = new Set(['hidden']);
-      elements.set(id, {
-        textContent: '', style: {},
-        classList: {
-          add: name=>classes.add(name), remove: name=>classes.delete(name),
-          contains: name=>classes.has(name),
-          toggle(name, hidden){ if(hidden) classes.add(name); else classes.delete(name); }
-        },
-        getContext: ()=>({setTransform(){}}),
-        getBoundingClientRect: ()=>({width: 800, height: 600}),
-        addEventListener(){}
-      });
-    }
-    return elements.get(id);
-  }
-  const context = vm.createContext({
-    document: {getElementById: element, hidden: false,
-      addEventListener: (name, callback)=>{events[name] = callback;}},
-    window: {devicePixelRatio: 1, addEventListener: (name, callback)=>{events[name] = callback;}},
-    // Любое обращение к старому браузерному рекорду ломает тест.
-    localStorage: {getItem(){throw new Error('localStorage не должен читаться');}},
-    ResizeObserver: class {observe(){}}, performance: {now: ()=>0},
-    requestAnimationFrame(){}, setInterval: fn=>intervals.push(fn),
-    setTimeout, clearTimeout, AbortController,
-    console: {error(){}, warn(){}}, alert(){},
-    fetch: async (url, options)=>{
-      calls.push({url, method: options.method || 'GET', body: options.body});
-      if(options.method === 'POST'){
-        if(model.failPost) return {ok:false, status:500};
-        model.best = Math.max(model.best, JSON.parse(options.body).score);
-      }
-      const value = model.best;
-      if(options.method !== 'POST' && model.beforeGet) await model.beforeGet();
-      return {ok:true, json: async ()=>({bestScore: model.invalid ? '950' : value})};
-    }
-  });
-  vm.runInContext(source, context);
-  vm.runInContext('soundEnd = ()=>{}; soundRecord = ()=>{}; soundStart = ()=>{};', context);
-  return {model, calls, intervals, events, element, run: code=>vm.runInContext(code, context)};
-}
 
 test('загрузка только читает файл и не переносит браузерный рекорд', async ()=>{
   const app = fixture(100);
@@ -152,4 +101,31 @@ test('ошибочный ответ не превращается в нулев�
   await app.run('loadRecord()');
   assert.equal(app.run('recordsReady'), true);
   assert.equal(app.element('resultBest').textContent, 120);
+});
+
+test('полный раунд с продлением сохраняет результат и позволяет начать новый', async ()=>{
+  const app = fixture(100);
+  await app.run('loadRecord()');
+  app.run(`
+    let completion;
+    const originalFinish = finishGame;
+    finishGame = ()=>{completion = originalFinish();};
+    startGame();
+    spawnPlan = [];
+    score = 500;
+    bonusSeconds = 20;
+    advanceGame(100,800,600);
+  `);
+  await app.run('completion');
+  assert.equal(app.run('elapsed'),80);
+  assert.equal(app.run('state'),'result');
+  assert.equal(app.model.best,500);
+  assert.equal(app.element('finalScore').textContent,500);
+  assert.equal(app.element('resultBest').textContent,500);
+  assert.equal(app.element('resultOverlay').classList.contains('hidden'),false);
+  assert.equal(app.run('recordSaving'),false);
+  app.run('startGame()');
+  assert.equal(app.run('state'),'playing');
+  assert.equal(app.element('timer').textContent,'01:00');
+  assert.equal(app.element('resultOverlay').classList.contains('hidden'),true);
 });

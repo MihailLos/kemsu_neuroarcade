@@ -18,6 +18,16 @@ const resultComboEl = document.getElementById('resultCombo');
 const finalScoreEl = document.getElementById('finalScore');
 
 const GAME_SECONDS = 60;
+const TIME_BONUS_SECONDS = 5;
+const MAX_BONUS_SECONDS = 20;
+// В каждом 15-секундном этапе — один дополнительный блок времени.
+const ROUND_PHASES = [
+  {good:11, bad:5, gold:1, wide:1, time:1},
+  {good:13, bad:5, gold:2, wide:1, time:1},
+  {good:15, bad:5, gold:2, wide:1, time:1},
+  {good:17, bad:7, gold:1, wide:2, time:1}
+];
+const EXTRA_PHASE = {good:4, bad:2, gold:1, wide:0, time:0};
 let dpr = Math.min(window.devicePixelRatio || 1, 2);
 let currentMode = 'idle'; // idle camera mouse
 let state = 'menu'; // menu playing result
@@ -33,7 +43,9 @@ let player = {x:0.5, targetX:0.5, y:0.86, width:118, height:22, pulse:0};
 let objects = [];
 let particles = [];
 let floaterTexts = [];
-let spawnTimer = 0;
+let spawnPlan = [];
+let spawnIndex = 0;
+let bonusSeconds = 0;
 let elapsed = 0;
 let streak = 0;
 let bestCombo = 0;
@@ -240,7 +252,10 @@ function startGame(){
   particles = [];
   floaterTexts = [];
   elapsed = 0;
-  spawnTimer = 0;
+  bonusSeconds = 0;
+  spawnPlan = createSpawnPlan();
+  spawnIndex = 0;
+  lastFrame = performance.now();
   streak = 0;
   bestCombo = 0;
   goodCaught = 0;
@@ -322,23 +337,87 @@ function updateHud(){
   scoreEl.textContent = pad4(score);
   bestEl.textContent = pad4(bestScore);
   resultBestEl.textContent = bestScore;
-  const timeLeft = Math.max(0, GAME_SECONDS - elapsed);
+  const timeLeft = Math.ceil(Math.max(0, GAME_SECONDS + bonusSeconds - elapsed - 1e-9));
   const mm = String(Math.floor(timeLeft / 60)).padStart(2,'0');
   const ss = String(Math.floor(timeLeft % 60)).padStart(2,'0');
   timerEl.textContent = `${mm}:${ss}`;
 }
 
-function spawnObject(){
-  const random = Math.random();
-  const kind = random < .055 ? 'wide' : random < .125 ? 'gold' : random < .37 ? 'bad' : 'good';
-  const w = kind === 'wide' ? 82 : kind === 'gold' ? 72 : rand(64,88);
+function shuffled(items){
+  const result = [...items];
+  for(let i=result.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [result[i],result[j]] = [result[j],result[i]];
+  }
+  return result;
+}
+
+function trailingBad(kinds, initial = 0){
+  let run = initial;
+  for(const kind of kinds){
+    run = kind === 'bad' ? run+1 : 0;
+    if(run > 2) return -1;
+  }
+  return run;
+}
+
+function createPhaseKinds(counts, previousBad){
+  const ordinary = [...Array(counts.good).fill('good'), ...Array(counts.bad).fill('bad')];
+  const specials = shuffled([
+    ...Array(counts.gold).fill('gold'), ...Array(counts.wide).fill('wide'),
+    ...Array(counts.time).fill('time')
+  ]);
+  const count = ordinary.length + specials.length;
+  const slots = Array(count).fill(null);
+  // Разносим бонусы по отдельным участкам этапа, а не собираем в одной точке.
+  specials.forEach((kind,i)=>{
+    const from = Math.floor(i*count/specials.length);
+    const to = Math.floor((i+1)*count/specials.length);
+    slots[from + Math.floor(Math.random()*(to-from))] = kind;
+  });
+  for(let attempt=0;attempt<100;attempt++){
+    const bag = shuffled(ordinary);
+    const kinds = slots.map(kind=>kind || bag.pop());
+    if(trailingBad(kinds,previousBad) !== -1) return kinds;
+  }
+  // Ограничиваем число попыток даже при неудачном генераторе случайных чисел.
+  let remainingBad = counts.bad;
+  let run = previousBad;
+  return slots.map(special=>{
+    const kind = special || (remainingBad > 0 && run < 2 ? 'bad' : 'good');
+    if(!special && kind === 'bad') remainingBad--;
+    run = kind === 'bad' ? run+1 : 0;
+    return kind;
+  });
+}
+
+function createSpawnPlan(){
+  const plan = [];
+  let previousBad = 0;
+  const phases = [...ROUND_PHASES, ...Array(4).fill(EXTRA_PHASE)];
+  phases.forEach((counts,phase)=>{
+    const kinds = createPhaseKinds(counts,previousBad);
+    previousBad = trailingBad(kinds,previousBad);
+    const start = phase < 4 ? phase*15 : GAME_SECONDS+(phase-4)*5;
+    const end = phase < 4 ? Math.min(start+14, GAME_SECONDS-4) : start+2.8;
+    kinds.forEach((kind,i)=>{
+      plan.push({kind, at:start+(end-start)*i/(kinds.length-1), tier:Math.min(phase,3)});
+    });
+  });
+  return plan;
+}
+
+function spawnObject(entry){
+  const kind = entry.kind;
+  const w = kind === 'wide' || kind === 'time' ? 82 : kind === 'gold' ? 72 : rand(64,88);
   const h = 44;
-  const tier = Math.floor(elapsed / 15);
   const x = rand(w/2 + 9, Math.max(w/2 + 9, canvas.clientWidth-w/2-9));
-  const speed = rand(135,180) * (1 + tier * .17);
+  // Время подлёта зависит от этапа, а не от высоты окна и случайной скорости.
+  const flightSeconds = 3 / (1 + entry.tier*.17);
+  const speed = (player.y*canvas.clientHeight + 50) / flightSeconds;
   const tokens = kind === 'bad' ? ERROR_TOKENS : CODE_TOKENS;
   objects.push({x,y:-50,w,h,speed,kind,
-    text:kind==='gold'?'★ +50':kind==='wide'?'↔  ШИРЕ':tokens[Math.floor(Math.random()*tokens.length)],
+    text:kind==='time'?'+5 СЕК':kind==='gold'?'★ +50':kind==='wide'?'↔  ШИРЕ':tokens[Math.floor(Math.random()*tokens.length)],
     rot:rand(-.12,.12),spin:rand(-.25,.25),glow:rand(0,Math.PI*2)});
 }
 
@@ -465,24 +544,22 @@ function roundRect(context, x, y, w, h, r){
 }
 
 function drawObject(obj){
-  const palette = {good:['#ffffff','#0f4cff'],bad:['#ff4d5e','#ffffff'],gold:['#ffcf48','#533600'],wide:['#c5efce','#1a5634']};
+  const palette = {good:['#ffffff','#0f4cff'],bad:['#ff4d5e','#ffffff'],gold:['#ffcf48','#533600'],wide:['#c5efce','#1a5634'],time:['#bdefff','#084c70']};
   const [bg,fg] = palette[obj.kind];
   ctx.save();ctx.translate(obj.x,obj.y);ctx.rotate(obj.rot);
   ctx.shadowBlur=12;ctx.shadowColor='rgba(0,0,0,.15)';
   roundRect(ctx,-obj.w/2,-obj.h/2,obj.w,obj.h,13);
   ctx.fillStyle=bg;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=fg;ctx.stroke();
-  ctx.fillStyle=fg;ctx.font=`900 ${obj.kind==='wide'?13:obj.kind==='gold'?16:obj.kind==='good'?18:15}px Arial,sans-serif`;
+  ctx.fillStyle=fg;ctx.font=`900 ${obj.kind==='wide'?13:obj.kind==='time'?15:obj.kind==='gold'?16:obj.kind==='good'?18:15}px Arial,sans-serif`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(obj.text,0,1);ctx.restore();
 }
 
 function updateObjects(dt,w,h){
-  spawnTimer -= dt;
-  const tier = Math.floor(elapsed / 15);
+  const tier = Math.min(3, Math.floor(elapsed / 15));
   if(tier > lastTier){ lastTier=tier; addFloater('УРОВЕНЬ '+(tier+1),w*.5,h*.39,'#b76a00'); soundCombo(); }
-  const spawnInterval = Math.max(.39, .82 - tier * .09);
-  if(state === 'playing' && spawnTimer <= 0){
-    spawnObject();
-    spawnTimer = spawnInterval;
+  while(spawnIndex < spawnPlan.length && spawnPlan[spawnIndex].at <= elapsed+1e-9 &&
+        spawnPlan[spawnIndex].at < GAME_SECONDS + bonusSeconds - 1e-9){
+    spawnObject(spawnPlan[spawnIndex++]);
   }
 
   const px = player.x * w;
@@ -508,38 +585,7 @@ function updateObjects(dt,w,h){
     const sweptBottom = Math.max(previousY, obj.y) + obj.h / 2;
     const hitY = sweptBottom >= platformTop - 4 && sweptTop <= platformBottom + 4;
     if(hitX && hitY){
-      if(obj.kind === 'gold'){
-        score += 50; goodCaught++; streak++; bestCombo=Math.max(bestCombo,streak);
-        addParticles(obj.x,obj.y,'#ffb900',36);addFloater('+50',obj.x,obj.y,'#b76a00');player.hitFlash=1;soundCombo();
-      } else if(obj.kind === 'wide'){
-        boostUntil = elapsed + 10; goodCaught++; streak++; bestCombo=Math.max(bestCombo,streak);
-        addParticles(obj.x,obj.y,'#ffb900',32);addFloater('ПЛАТФОРМА ШИРЕ: 10 СЕК',obj.x,obj.y,'#b76a00');player.hitFlash=1;soundCombo();
-      } else if(obj.kind === 'good'){
-        score += 10;
-        goodCaught += 1;
-        streak += 1;
-        bestCombo = Math.max(bestCombo, streak);
-        addParticles(obj.x, obj.y, '#ffb900', 30);
-        player.hitFlash = 1;
-        addFloater('+10', obj.x, obj.y, '#b76a00');
-        soundCatch();
-        if(streak > 0 && streak % 5 === 0){
-          const comboBonus = 20;
-          score += comboBonus;
-          bestCombo = Math.max(bestCombo, streak);
-          addFloater(`СЕРИЯ x${streak}  +${comboBonus}`, obj.x, obj.y - 24, '#b76a00');
-          addParticles(obj.x, obj.y, '#ffb900', 26);
-          soundCombo();
-        }
-      } else {
-        score = Math.max(0, score - 15);
-        badCaught += 1;
-        streak = 0;
-        addParticles(obj.x, obj.y, '#ff4d5e', 26);
-        player.badFlash = 1;
-        addFloater('-15', obj.x, obj.y, '#ff4d5e');
-        soundBad();
-      }
+      catchObject(obj);
       objects.splice(i,1);
       updateHud();
       continue;
@@ -547,6 +593,65 @@ function updateObjects(dt,w,h){
 
     if(obj.y - obj.h/2 > h + 40){
       objects.splice(i,1);
+    }
+  }
+}
+
+function catchObject(obj){
+  if(obj.kind === 'bad'){
+    score = Math.max(0, score - 15);
+    badCaught++;
+    streak = 0;
+    addParticles(obj.x,obj.y,'#ff4d5e',26);
+    player.badFlash = 1;
+    addFloater('-15',obj.x,obj.y,'#ff4d5e');
+    soundBad();
+    return;
+  }
+
+  goodCaught++;
+  streak++;
+  bestCombo = Math.max(bestCombo,streak);
+  player.hitFlash = 1;
+  if(obj.kind === 'time'){
+    const added = Math.min(TIME_BONUS_SECONDS,MAX_BONUS_SECONDS-bonusSeconds);
+    bonusSeconds += added;
+    addFloater(`+${added} СЕК`,obj.x,obj.y,'#084c70');
+    addParticles(obj.x,obj.y,'#bdefff',26);
+    soundCombo();
+  } else if(obj.kind === 'wide'){
+    boostUntil = elapsed + 10;
+    addFloater('ПЛАТФОРМА ШИРЕ: 10 СЕК',obj.x,obj.y,'#b76a00');
+    addParticles(obj.x,obj.y,'#ffb900',32);
+    soundCombo();
+  } else {
+    const points = obj.kind === 'gold' ? 50 : 10;
+    score += points;
+    addFloater(`+${points}`,obj.x,obj.y,'#b76a00');
+    addParticles(obj.x,obj.y,'#ffb900',obj.kind === 'gold' ? 36 : 30);
+    if(obj.kind === 'gold') soundCombo(); else soundCatch();
+  }
+  // Любой полезный блок завершает пятёрку: код, золото, расширение или время.
+  if(streak % 5 === 0){
+    score += 20;
+    addFloater(`СЕРИЯ x${streak}  +20`,obj.x,obj.y-24,'#b76a00');
+    addParticles(obj.x,obj.y,'#ffb900',26);
+    soundCombo();
+  }
+}
+
+function advanceGame(seconds,w,h){
+  // Маленькие шаги сохраняют столкновения, реальное время не растягивается при низком FPS.
+  while(seconds > 1e-9 && state === 'playing'){
+    const remaining = GAME_SECONDS + bonusSeconds - elapsed;
+    if(remaining <= 1e-9){ finishGame(); break; }
+    const dt = Math.min(.05,seconds,remaining);
+    elapsed += dt;
+    updateObjects(dt,w,h);
+    seconds -= dt;
+    if(elapsed >= GAME_SECONDS + bonusSeconds - 1e-9){
+      elapsed = GAME_SECONDS + bonusSeconds;
+      finishGame();
     }
   }
 }
@@ -590,7 +695,8 @@ function drawParticles(){
 }
 
 function render(timestamp){
-  const dt = Math.min(.05, (timestamp - lastFrame) / 1000);
+  const frameSeconds = Math.max(0, (timestamp - lastFrame) / 1000);
+  const dt = Math.min(.05,frameSeconds);
   lastFrame = timestamp;
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
@@ -599,15 +705,7 @@ function render(timestamp){
 
   drawBackground(timestamp, w, h);
 
-  if(state === 'playing'){
-    elapsed += dt;
-    if(elapsed >= GAME_SECONDS && !gameOverFlag){
-      elapsed = GAME_SECONDS;
-      updateHud();
-      finishGame();
-    }
-    if(state === 'playing') updateObjects(dt, w, h);
-  }
+  if(state === 'playing') advanceGame(frameSeconds,w,h);
 
   updateParticles(dt);
   drawPlayer(w, h, dt);
