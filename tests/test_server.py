@@ -68,6 +68,7 @@ class ServerTests(unittest.TestCase):
     def test_first_run_without_data_directory(self):
         status, body, _ = self.request()
         self.assertEqual((status, json.loads(body)), (200, {'bestScore': 0}))
+        self.assertEqual(json.loads(self.record.read_text()), {'bestScore': 0})
         self.assertEqual(self.post(650), (200, {'bestScore': 650}))
         self.assertEqual(json.loads(self.record.read_text()), {'bestScore': 650})
         self.assertEqual(list(self.record.parent.glob('.record-*.tmp')), [])

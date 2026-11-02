@@ -16,6 +16,7 @@ os.chdir(ROOT)
 
 def read_best():
     if not RECORD_FILE.exists():
+        save_best(0)
         return 0
     data = json.loads(RECORD_FILE.read_text(encoding='utf-8'))
     score = data['bestScore']
