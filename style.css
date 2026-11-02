@@ -43,7 +43,7 @@ button{font:inherit}
 canvas{width:100%;height:100%;display:block;position:relative;z-index:1}
 #camera{display:none;width:132px;height:88px;object-fit:cover;border:3px solid #0f4cff;border-radius:15px;transform:scaleX(-1);box-shadow:0 8px 18px rgba(0,0,0,.16)}
 .camera-dock{flex-shrink:0;display:flex;align-items:center;justify-content:center;min-height:88px}
-.topbar{position:absolute;left:20px;top:20px;z-index:6}
+.topbar{position:absolute;left:20px;right:20px;top:20px;z-index:6;display:flex;align-items:center;justify-content:space-between;gap:12px;pointer-events:none}
 .brand-badge{background:var(--paper);color:var(--blue);padding:12px 18px;border-radius:999px;font-size:14px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;box-shadow:0 8px 20px rgba(0,0,0,.15)}
 .hud{position:absolute;left:20px;right:20px;top:74px;display:flex;gap:12px;z-index:6;pointer-events:none;flex-wrap:wrap}
 .hud-box{min-width:146px;background:rgba(255,255,255,.9);backdrop-filter:blur(6px);border:2px solid rgba(255,255,255,.65);border-radius:22px;padding:12px 16px;box-shadow:0 10px 20px rgba(0,0,0,.1)}
@@ -143,3 +143,25 @@ canvas{width:100%;height:100%;display:block;position:relative;z-index:1}
 .record-banner{background:#ffcf48;color:#463000;border-radius:999px;padding:9px 18px;margin:5px auto 10px;font-weight:900;max-width:max-content;animation:recordPop .55s ease both;box-shadow:0 5px 20px rgba(255,180,0,.28)}
 .record-banner.hidden{display:none}
 @keyframes recordPop{from{transform:scale(.75);opacity:0}to{transform:scale(1);opacity:1}}
+
+/* Сердца рядом с фирменной плашкой. Анимации работают без дополнительных ресурсов. */
+.lives{display:flex;gap:8px;align-items:center;padding:7px 12px;border-radius:999px;background:var(--paper);box-shadow:0 8px 20px rgba(0,0,0,.15);flex-shrink:0}
+.heart{display:block;width:30px;height:30px;color:var(--red)}
+.heart svg{display:block;width:100%;height:100%;overflow:visible}
+.heart-outline{fill:none;stroke:currentColor;stroke-width:1.6;opacity:.4}
+.heart-fill{fill:currentColor;transform-origin:center}
+.heart.is-empty .heart-fill{opacity:0}
+.heart.just-lost .heart-fill{animation:heartBurst .45s ease-out both}
+.heart.is-pulsing{animation:heartPulse .65s ease-in-out infinite}
+@keyframes heartBurst{0%{transform:scale(1);opacity:1}40%{transform:scale(1.4);opacity:.8}100%{transform:scale(.3) translateY(-12px);opacity:0}}
+@keyframes heartPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.85);opacity:.45}}
+@media(max-width:680px){
+ .topbar{left:12px;right:12px;gap:8px}
+ .topbar .brand-badge{font-size:11px;padding:11px 12px;letter-spacing:.04em}
+ .lives{gap:5px;padding:7px 10px}
+ .heart{width:26px;height:26px}
+}
+@media(prefers-reduced-motion:reduce){
+ .heart.just-lost .heart-fill{animation:none;opacity:0}
+ .heart.is-pulsing{animation:none;opacity:.6}
+}

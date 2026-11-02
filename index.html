@@ -41,7 +41,14 @@
     <section class="play-shell" id="playShell">
       <canvas id="game"></canvas>
 
-      <div class="topbar brand-badge">Институт Цифры</div>
+      <div class="topbar">
+        <div class="brand-badge">Институт Цифры</div>
+        <div class="lives" id="lives" role="img" aria-label="Жизни: 3 из 3">
+          <span class="heart" id="heart0" aria-hidden="true"><svg viewBox="0 0 24 24"><path class="heart-outline" d="M12 21s-9-5.5-9-12a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 6.5-9 12-9 12Z"/><path class="heart-fill" d="M12 21s-9-5.5-9-12a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 6.5-9 12-9 12Z"/></svg></span>
+          <span class="heart" id="heart1" aria-hidden="true"><svg viewBox="0 0 24 24"><path class="heart-outline" d="M12 21s-9-5.5-9-12a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 6.5-9 12-9 12Z"/><path class="heart-fill" d="M12 21s-9-5.5-9-12a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 6.5-9 12-9 12Z"/></svg></span>
+          <span class="heart" id="heart2" aria-hidden="true"><svg viewBox="0 0 24 24"><path class="heart-outline" d="M12 21s-9-5.5-9-12a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 6.5-9 12-9 12Z"/><path class="heart-fill" d="M12 21s-9-5.5-9-12a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 6.5-9 12-9 12Z"/></svg></span>
+        </div>
+      </div>
 
       <div class="hud" id="hud">
         <div class="hud-box score-box">
@@ -67,10 +74,10 @@
         <div class="overlay-card">
           <div class="overlay-topline">Институт Цифры · КемГУ</div>
           <h2>ЛОВИ КОД</h2>
-          <p>Собирай полезные плитки с кодом и избегай красных ошибок. Для управления можно использовать камеру или мышь. Раунд — 60 секунд; блоки «+5 СЕК» могут продлить его до 80 секунд.</p>
+          <p>Собирай полезные плитки с кодом и избегай красных ошибок. Для управления можно использовать камеру или мышь. У тебя 3 жизни. Раунд заканчивается, когда они иссякнут или выйдет время: 60 секунд, до 80 с бонусами.</p>
           <div class="legend">
             <div class="legend-item"><span class="legend-chip good">&lt;/&gt;</span> +10 очков за код</div>
-            <div class="legend-item"><span class="legend-chip bad">ERROR</span> −15 очков за ошибку</div>
+            <div class="legend-item"><span class="legend-chip bad">ERROR</span> −15 очков и −1 жизнь; защита сердца — 2 секунды</div>
             <div class="legend-item"><span class="legend-chip combo">x5</span> +20 очков за каждые 5 полезных блоков подряд</div>
             <div class="legend-item"><span class="legend-chip time">+5 СЕК</span> дополнительное время, максимум +20 секунд</div>
           </div>
@@ -83,7 +90,7 @@
 
       <div class="overlay overlay-result hidden" id="resultOverlay">
         <div class="overlay-card result-card">
-          <div class="overlay-topline">Раунд завершён</div>
+          <div class="overlay-topline" id="resultReason">Раунд завершён</div>
           <h2>ЛОВИ КОД</h2>
           <div class="record-banner hidden" id="recordBanner">★ НОВЫЙ РЕКОРД! ★</div>
           <div class="result-main" id="finalScore">0</div>

@@ -12,8 +12,11 @@ function fixture(initial = 100){
   function element(id){
     if(!elements.has(id)){
       const classes = new Set(['hidden']);
+      const attributes = new Map();
       elements.set(id, {
         textContent: '', style: {}, clientWidth:800, clientHeight:600,
+        getAttribute: name=>attributes.get(name) ?? null,
+        setAttribute: (name,value)=>attributes.set(name,String(value)),
         classList: {
           add: name=>classes.add(name), remove: name=>classes.delete(name),
           contains: name=>classes.has(name),

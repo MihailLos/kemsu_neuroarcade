@@ -10,6 +10,8 @@ const bestEl = document.getElementById('best');
 const indicatorEl = document.getElementById('indicator');
 const fpsEl = document.getElementById('fps');
 const hintEl = document.getElementById('hint');
+const livesEl = document.getElementById('lives');
+const heartEls = Array.from({length:3},(_,i)=>document.getElementById('heart'+i));
 
 const resultBestEl = document.getElementById('resultBest');
 const resultGoodEl = document.getElementById('resultGood');
@@ -17,6 +19,8 @@ const resultBadEl = document.getElementById('resultBad');
 const resultComboEl = document.getElementById('resultCombo');
 const finalScoreEl = document.getElementById('finalScore');
 
+const MAX_LIVES = 3;
+const HEART_SHIELD_SECONDS = 2;
 const GAME_SECONDS = 60;
 const TIME_BONUS_SECONDS = 5;
 const MAX_BONUS_SECONDS = 20;
@@ -47,6 +51,9 @@ let spawnPlan = [];
 let spawnIndex = 0;
 let bonusSeconds = 0;
 let elapsed = 0;
+let lives = MAX_LIVES;
+let heartShieldUntil = 0;
+let lastLostHeart = -1;
 let streak = 0;
 let bestCombo = 0;
 let goodCaught = 0;
@@ -261,6 +268,7 @@ function startGame(){
   goodCaught = 0;
   badCaught = 0;
   score = 0;
+  resetLives();
   gameOverFlag = false;
   boostUntil = 0;
   recordCelebration = false;
@@ -277,12 +285,14 @@ function startGame(){
 }
 
 async function finishGame(){
+  if(gameOverFlag) return;
   state = 'result';
   gameOverFlag = true;
   soundEnd();
   recordSaving = true;
   recordCelebration = false;
   updateHud();
+  document.getElementById('resultReason').textContent = lives === 0 ? 'Жизни закончились' : 'Время вышло';
   finalScoreEl.textContent = score;
   resultBestEl.textContent = bestScore;
   resultGoodEl.textContent = goodCaught;
@@ -312,6 +322,7 @@ async function finishGame(){
 
 function backToMenu(){
   state = 'menu';
+  resetLives();
   menuOverlay.classList.remove('hidden');
   resultOverlay.classList.add('hidden');
   if(currentMode === 'camera' && cameraEl.srcObject) cameraEl.style.display = 'block';
@@ -333,7 +344,26 @@ function fullReset(){
   hintEl.textContent = 'Если нужно, заново запустите игру.';
 }
 
+function resetLives(){
+  lives = MAX_LIVES;
+  heartShieldUntil = 0;
+  lastLostHeart = -1;
+  updateHearts();
+}
+
+function updateHearts(){
+  const shielded = state === 'playing' && lives > 0 && elapsed < heartShieldUntil-1e-9;
+  heartEls.forEach((heart,i)=>{
+    heart.classList.toggle('is-empty',i >= lives);
+    heart.classList.toggle('just-lost',i === lastLostHeart);
+    heart.classList.toggle('is-pulsing',shielded && i === lives-1);
+  });
+  const label = `Жизни: ${lives} из ${MAX_LIVES}${shielded ? '. Защита сердца' : ''}`;
+  if(livesEl.getAttribute('aria-label') !== label) livesEl.setAttribute('aria-label',label);
+}
+
 function updateHud(){
+  updateHearts();
   scoreEl.textContent = pad4(score);
   bestEl.textContent = pad4(bestScore);
   resultBestEl.textContent = bestScore;
@@ -588,6 +618,7 @@ function updateObjects(dt,w,h){
       catchObject(obj);
       objects.splice(i,1);
       updateHud();
+      if(state !== 'playing') return;
       continue;
     }
 
@@ -598,6 +629,7 @@ function updateObjects(dt,w,h){
 }
 
 function catchObject(obj){
+  if(state !== 'playing') return;
   if(obj.kind === 'bad'){
     score = Math.max(0, score - 15);
     badCaught++;
@@ -606,6 +638,13 @@ function catchObject(obj){
     player.badFlash = 1;
     addFloater('-15',obj.x,obj.y,'#ff4d5e');
     soundBad();
+    if(elapsed >= heartShieldUntil-1e-9){
+      lives--;
+      lastLostHeart = lives;
+      heartShieldUntil = lives > 0 ? elapsed + HEART_SHIELD_SECONDS : 0;
+      updateHearts();
+      if(lives === 0) finishGame();
+    }
     return;
   }
 
@@ -648,6 +687,7 @@ function advanceGame(seconds,w,h){
     const dt = Math.min(.05,seconds,remaining);
     elapsed += dt;
     updateObjects(dt,w,h);
+    if(state !== 'playing') break;
     seconds -= dt;
     if(elapsed >= GAME_SECONDS + bonusSeconds - 1e-9){
       elapsed = GAME_SECONDS + bonusSeconds;
