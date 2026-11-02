@@ -78,15 +78,19 @@ class Handler(SimpleHTTPRequestHandler):
             if not (0 < length <= 1024):
                 return self.reply_json(400, {'error':'Некорректный размер запроса'})
             data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict):
+                return self.reply_json(400, {'error':'Ожидается объект JSON'})
             score = data.get('score')
             if type(score) is not int or not (0 <= score <= 1_000_000_000):
                 return self.reply_json(400, {'error':'Некорректный счёт'})
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            return self.reply_json(400, {'error':'Некорректные данные'})
+
+        try:
             with lock:
                 best = max(read_best(), score)
                 save_best(best)
             return self.reply_json(200, {'bestScore': best})
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
-            return self.reply_json(400, {'error':'Некорректные данные'})
         except Exception as exc:
             print('Ошибка записи рекорда:', exc)
             return self.reply_json(500, {'error':'Не удалось сохранить рекорд'})
