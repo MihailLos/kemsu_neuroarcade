@@ -41,7 +41,8 @@ let bestCombo = 0;
 let goodCaught = 0;
 let badCaught = 0;
 let score = 0;
-let bestScore = Number(localStorage.getItem(STORAGE_KEY) || 0);
+let bestScore = 0;
+let recordsReady = false;
 let gameOverFlag = false;
 let boostUntil = 0;
 let previousBest = bestScore;
@@ -52,6 +53,50 @@ const CODE_TOKENS = ['</>', '{}', 'var', 'AI', 'JS', 'if'];
 const ERROR_TOKENS = ['ERROR', '404', '!!!', 'BUG'];
 
 bestEl.textContent = pad4(bestScore);
+
+async function loadRecord(){
+  try {
+    const response = await fetch('/api/record', {cache:'no-store'});
+    if(!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    bestScore = Number.isSafeInteger(data.bestScore) ? Math.max(0,data.bestScore) : 0;
+    // Однократный перенос результата из старой версии, сохранённого браузером.
+    let legacy = 0;
+    try { legacy = Number(localStorage.getItem(STORAGE_KEY)) || 0; } catch (_) {}
+    if(Number.isSafeInteger(legacy) && legacy > bestScore){
+      const saveResponse = await fetch('/api/record', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({score:legacy})
+      });
+      if(!saveResponse.ok) throw new Error('Ошибка переноса рекорда');
+      bestScore = (await saveResponse.json()).bestScore;
+    }
+    recordsReady = true;
+    updateHud();
+  } catch (err) {
+    console.error('Ошибка файла рекорда:',err);
+    hintEl.textContent = 'Не удалось прочитать файл рекорда. Проверьте сервер и права записи.';
+    setIndicator('Ошибка файла рекорда');
+  }
+}
+
+async function saveRecord(value){
+  try {
+    const response = await fetch('/api/record', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({score:value})
+    });
+    if(!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    bestScore = data.bestScore;
+    updateHud();
+  } catch (err) {
+    console.error('Не удалось сохранить рекорд:',err);
+    hintEl.textContent = 'Ошибка записи рекорда в data/records.json. Проверьте права доступа к папке.';
+    setIndicator('Рекорд не сохранён');
+  }
+}
+loadRecord();
 
 function pad4(n){ return String(Math.max(0, Math.round(n))).padStart(4,'0'); }
 function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
@@ -143,6 +188,10 @@ function startMouseMode(){
 }
 
 function startGame(){
+  if(!recordsReady){
+    alert('Файл рекорда ещё не загружен. Проверьте работу локального сервера.');
+    return;
+  }
   objects = [];
   particles = [];
   floaterTexts = [];
@@ -176,7 +225,7 @@ function finishGame(){
   recordCelebration = score > previousBest && score > 0;
   if(recordCelebration){
     bestScore = score;
-    localStorage.setItem(STORAGE_KEY, String(bestScore));
+    saveRecord(bestScore);
     soundRecord();
   }
   updateHud();
