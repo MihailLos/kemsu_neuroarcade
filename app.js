@@ -2,6 +2,10 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const playShell = document.getElementById('playShell');
 const cameraEl = document.getElementById('camera');
+const cameraPreview = document.getElementById('cameraPreview');
+const handMarker = document.getElementById('handMarker');
+const cameraReadyOverlay = document.getElementById('cameraReadyOverlay');
+const cameraReadyStatus = document.getElementById('cameraReadyStatus');
 const menuOverlay = document.getElementById('menuOverlay');
 const resultOverlay = document.getElementById('resultOverlay');
 const scoreEl = document.getElementById('score');
@@ -41,10 +45,16 @@ const ROUND_PHASES = [
 const EXTRA_PHASE = {good:4, bad:2, gold:1, wide:0, time:0};
 let dpr = Math.min(window.devicePixelRatio || 1, 2);
 let currentMode = 'idle'; // idle camera mouse
-let state = 'menu'; // menu training countdown playing result
+let state = 'menu'; // menu camera-ready training countdown playing result
 let handLandmarker = null;
+let handInitPromise = null;
 let videoStream = null;
 let lastDetect = 0;
+let lastVideoTime = -1;
+let lastCameraFrame = 0;
+let cameraStartId = 0;
+let cameraStarting = false;
+let handTrack = {x:null, candidate:null, samples:0};
 let frameTimes = [];
 let lastFrame = performance.now();
 let audioCtx = null;
@@ -221,7 +231,14 @@ function soundRecord(){ beep({freq:700,type:'square',duration:0.08,gain:0.02,fre
 
 async function initHandTracking(){
   if(handLandmarker) return;
+  if(handInitPromise) return handInitPromise;
   if(!navigator.mediaDevices?.getUserMedia) throw new Error('Камера недоступна: запускайте через localhost и современный браузер.');
+  handInitPromise = createHandLandmarker();
+  try{ await handInitPromise; }
+  finally{ handInitPromise = null; }
+}
+
+async function createHandLandmarker(){
   const media = await import('./assets/vision_bundle.mjs');
   const {FilesetResolver, HandLandmarker} = media.default || media;
   const vision = await FilesetResolver.forVisionTasks('./assets/wasm');
@@ -236,31 +253,59 @@ async function initHandTracking(){
 }
 
 async function startCameraMode(){
-  ensureAudio();
+  if(cameraStarting || ['camera-ready','training','countdown','playing'].includes(state) || !canStartGame()) return;
+  const startId = ++cameraStartId;
+  cameraStarting = true;
   try{
+    ensureAudio();
     setIndicator('Загрузка распознавания руки...');
     hintEl.textContent = 'Подождите: включаем камеру и модель распознавания.';
     await initHandTracking();
+    if(startId !== cameraStartId) return;
     if(!videoStream){
-      videoStream = await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:'user'},audio:false});
+      const stream = await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:'user'},audio:false});
+      if(startId !== cameraStartId){ stream.getTracks().forEach(t=>t.stop()); return; }
+      videoStream = stream;
       cameraEl.srcObject = videoStream;
       await cameraEl.play();
     }
+    if(startId !== cameraStartId) return;
     cameraEl.style.display = 'block';
+    cameraPreview.classList.remove('hidden');
     currentMode = 'camera';
-    beginSession();
+    closeTutorial();
+    resetRoundState();
+    resetHandTracking();
+    lastVideoTime = -1;
+    lastDetect = -Infinity;
+    lastCameraFrame = performance.now();
+    state = 'camera-ready';
+    menuOverlay.classList.add('hidden');
+    resultOverlay.classList.add('hidden');
+    cameraReadyOverlay.classList.remove('hidden');
+    setCameraStatus('Покажите ладонь камере');
+    hintEl.textContent = 'Держите одну ладонь целиком в кадре. Игра начнётся после уверенного распознавания.';
   }catch(err){
+    if(startId !== cameraStartId) return;
     console.error(err);
     setIndicator('Ошибка камеры');
     hintEl.textContent = String(err.message || err);
     alert('Не удалось включить камеру.\n\n' + (err.message || err) + '\n\nЕсли игра уже была установлена раньше, проверьте наличие папки assets.');
+  }finally{
+    if(startId === cameraStartId) cameraStarting = false;
   }
 }
 
 function startMouseMode(){
+  if(['training','countdown','playing'].includes(state) || !canStartGame()) return;
+  ++cameraStartId;
+  cameraStarting = false;
+  cameraReadyOverlay.classList.add('hidden');
+  resetHandTracking();
   ensureAudio();
   currentMode = 'mouse';
   cameraEl.style.display = 'none';
+  cameraPreview.classList.add('hidden');
   beginSession();
 }
 
@@ -525,6 +570,10 @@ async function finishGame(){
 }
 
 function backToMenu(){
+  ++cameraStartId;
+  cameraStarting = false;
+  cameraReadyOverlay.classList.add('hidden');
+  resetHandTracking();
   closeTutorial();
   state = 'menu';
   resetLives();
@@ -539,11 +588,13 @@ function fullReset(){
   backToMenu();
   currentMode = 'idle';
   cameraEl.style.display = 'none';
+  cameraPreview.classList.add('hidden');
   if(videoStream){
     videoStream.getTracks().forEach(t => t.stop());
     videoStream = null;
     cameraEl.srcObject = null;
   }
+  handLandmarker?.close();
   handLandmarker = null;
   setIndicator('Сброс выполнен');
   hintEl.textContent = 'Если нужно, заново запустите игру.';
@@ -681,21 +732,97 @@ playShell.addEventListener('pointermove', (e)=>{
   player.targetX = clamp((e.clientX - r.left) / r.width, 0, 1);
 });
 
-async function detectHand(timestamp){
-  if(currentMode !== 'camera' || !handLandmarker || !cameraEl || cameraEl.readyState < 2) return;
+function resetHandTracking(){
+  handTrack = {x:null, candidate:null, samples:0};
+  player.targetX = player.x;
+  handMarker.classList.add('hidden');
+}
+
+function setCameraStatus(text){
+  if(cameraReadyStatus.textContent !== text) cameraReadyStatus.textContent = text;
+  setIndicator(text);
+}
+
+function loseHand(text = 'Ладонь не видна — покажите её целиком'){
+  resetHandTracking();
+  setCameraStatus(text);
+}
+
+function palmCenter(landmarks){
+  // Основание ладони и основания пальцев устойчивее одной точки при повороте кисти.
+  const points = [0,5,9,13,17].map(i=>landmarks?.[i]);
+  if(points.some(p=>!p || !Number.isFinite(p.x) || !Number.isFinite(p.y))) return null;
+  const x = points.reduce((sum,p)=>sum+p.x,0)/points.length;
+  const y = points.reduce((sum,p)=>sum+p.y,0)/points.length;
+  if(x < 0 || x > 1 || y < 0 || y > 1) return null;
+  return {x,y};
+}
+
+function showHandMarker(point, pending){
+  // Превью использует object-fit:cover: учитываем обрезку и зеркальное отражение.
+  const w = cameraEl.clientWidth, h = cameraEl.clientHeight;
+  const vw = cameraEl.videoWidth, vh = cameraEl.videoHeight;
+  if(!w || !h || !vw || !vh) return;
+  const scale = Math.max(w/vw,h/vh);
+  const x = 1-(point.x*vw*scale-(vw*scale-w)/2)/w;
+  const y = (point.y*vh*scale-(vh*scale-h)/2)/h;
+  handMarker.classList.toggle('hidden',x < 0 || x > 1 || y < 0 || y > 1);
+  handMarker.classList.toggle('is-pending',pending);
+  handMarker.style.left = `${x*100}%`;
+  handMarker.style.top = `${y*100}%`;
+}
+
+function acceptHand(point){
+  if(!point){ loseHand(); return false; }
+  const x = clamp(1-point.x,.05,.95);
+  const acquiring = handTrack.x === null;
+  const jump = !acquiring && Math.abs(x-handTrack.x) > .25;
+  if(acquiring || jump){
+    if(handTrack.candidate !== null && Math.abs(x-handTrack.candidate) <= .12){
+      handTrack.samples++;
+    }else{
+      handTrack.samples = 1;
+    }
+    handTrack.candidate = x;
+    if(handTrack.samples < (acquiring ? 3 : 2)){
+      player.targetX = player.x;
+      showHandMarker(point,true);
+      setCameraStatus(acquiring ? 'Вижу ладонь — удержите её ненадолго' : 'Проверяю положение ладони');
+      return false;
+    }
+  }
+  handTrack = {x, candidate:null, samples:0};
+  player.targetX = x;
+  showHandMarker(point,false);
+  setCameraStatus('Ладонь найдена');
+  return true;
+}
+
+function detectHand(timestamp){
+  if(currentMode !== 'camera' || !handLandmarker || !['camera-ready','training','countdown','playing'].includes(state)) return;
+  if(cameraEl.readyState < 2 || cameraEl.currentTime === lastVideoTime){
+    if(timestamp-lastCameraFrame > 500) loseHand('Нет новых кадров камеры — проверьте камеру');
+    return;
+  }
   if(timestamp - lastDetect < 66) return;
   lastDetect = timestamp;
+  lastVideoTime = cameraEl.currentTime;
+  lastCameraFrame = timestamp;
   try{
     const result = handLandmarker.detectForVideo(cameraEl, timestamp);
-    if(result.landmarks?.length){
-      const p = result.landmarks[0][9];
-      player.targetX = clamp(1 - p.x, 0.05, 0.95);
-      setIndicator('Ладонь обнаружена');
-    } else {
-      setIndicator('Покажи ладонь камере');
+    const accepted = acceptHand(palmCenter(result.landmarks?.[0]));
+    if(accepted && state === 'camera-ready'){
+      if(!recordsReady || recordSaving){
+        setCameraStatus('Ладонь найдена — ждём загрузки рекорда');
+        return;
+      }
+      cameraReadyOverlay.classList.add('hidden');
+      state = 'menu';
+      beginSession();
+      setCameraStatus('Ладонь найдена');
     }
   }catch(err){
-    console.warn(err);
+    loseHand('Ошибка распознавания — попробуйте «Сброс» или управление мышью');
   }
 }
 
@@ -982,6 +1109,8 @@ tutorialNext.addEventListener('click', nextTutorial);
 document.getElementById('tutorialSkip').addEventListener('click', startCountdown);
 document.getElementById('startCamera').addEventListener('click', startCameraMode);
 document.getElementById('startMouse').addEventListener('click', startMouseMode);
+document.getElementById('cameraUseMouse').addEventListener('click', startMouseMode);
+document.getElementById('cameraCancel').addEventListener('click', backToMenu);
 document.getElementById('playAgain').addEventListener('click', ()=>{
   if(currentMode === 'camera') startCameraMode(); else startMouseMode();
 });

@@ -36,6 +36,9 @@ test('обе кнопки управления учитывают настрой
   const camera = await game();
   camera.run('backToMenu(); ensureAudio=()=>{}; initHandTracking=async()=>{}; videoStream={};');
   await camera.run('startCameraMode()');
+  assert.equal(camera.run('state'),'camera-ready');
+  camera.run(`handLandmarker={detectForVideo:()=>({landmarks:[Array.from({length:21},()=>({x:.5,y:.5}))]})}; cameraEl.readyState=2;`);
+  for(let i=1;i<=3;i++) camera.run(`cameraEl.currentTime=${i}; detectHand(${i*70});`);
   assert.equal(camera.run('state'),'training');
   assert.match(camera.element('tutorialText').textContent,/ладонью/);
 });

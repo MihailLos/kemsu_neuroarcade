@@ -41,6 +41,19 @@
     <section class="play-shell" id="playShell">
       <canvas id="game"></canvas>
 
+      <div class="overlay hidden" id="cameraReadyOverlay">
+        <div class="overlay-card">
+          <div class="overlay-topline">Проверка управления</div>
+          <h2>Покажите ладонь</h2>
+          <p>Держите одну ладонь целиком перед камерой. Попросите стоящих рядом убрать руки из кадра. После распознавания начнётся обучение или игра.</p>
+          <p id="cameraReadyStatus" role="status">Покажите ладонь камере</p>
+          <div class="actions">
+            <button id="cameraUseMouse" class="primary">Играть мышью</button>
+            <button id="cameraCancel" class="secondary">В меню</button>
+          </div>
+        </div>
+      </div>
+
       <div class="topbar">
         <div class="brand-badge">Институт Цифры</div>
         <div class="lives" id="lives" role="img" aria-label="Жизни: 3 из 3">
@@ -129,7 +142,7 @@
 
     <footer class="footer-bar">
       <div class="footer-hint" id="hint">Нажмите “Играть с камерой” или “Играть мышью”.</div>
-      <div class="camera-dock"><video id="camera" autoplay muted playsinline></video></div>
+      <div class="camera-dock"><div class="camera-preview hidden" id="cameraPreview"><video id="camera" autoplay muted playsinline></video><span class="hand-marker hidden" id="handMarker" aria-hidden="true"></span></div></div>
       <div class="footer-actions">
         <button id="fullscreen">На весь экран ⛶</button>
         <button id="reset">Сброс</button>

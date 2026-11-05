@@ -41,7 +41,10 @@ button{font:inherit}
   linear-gradient(90deg, transparent 31px, rgba(255,255,255,.06) 32px);
   background-size:32px 32px;opacity:.34;pointer-events:none}
 canvas{width:100%;height:100%;display:block;position:relative;z-index:1}
-#camera{display:none;width:132px;height:88px;object-fit:cover;border:3px solid #0f4cff;border-radius:15px;transform:scaleX(-1);box-shadow:0 8px 18px rgba(0,0,0,.16)}
+.camera-preview{position:relative;width:132px;height:88px;border:3px solid #0f4cff;border-radius:15px;overflow:hidden;box-shadow:0 8px 18px rgba(0,0,0,.16)}
+#camera{display:none;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+.hand-marker{position:absolute;width:16px;height:16px;border:3px solid #fff;border-radius:50%;background:#32c977;box-shadow:0 0 0 2px #123b28;transform:translate(-50%,-50%);pointer-events:none}
+.hand-marker.is-pending{background:#ffcf48}
 .camera-dock{flex-shrink:0;display:flex;align-items:center;justify-content:center;min-height:88px}
 .topbar{position:absolute;left:20px;right:20px;top:20px;z-index:6;display:flex;align-items:center;justify-content:space-between;gap:12px;pointer-events:none}
 .brand-badge{background:var(--paper);color:var(--blue);padding:12px 18px;border-radius:999px;font-size:14px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;box-shadow:0 8px 20px rgba(0,0,0,.15)}
