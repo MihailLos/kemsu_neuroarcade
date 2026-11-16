@@ -29,9 +29,11 @@ test('после трёх волн интервал сокращается до 
     const app = await round();
     app.run(`
       const slots = [];
+      let seed=42;
+      Math.random=()=>((seed=(Math.imul(seed,1664525)+1013904223)>>>0)/4294967296);
       const baseSpawn = spawnNextBlock;
       spawnNextBlock = ()=>{
-        slots.push({contact:nextContactAt,flight:nextContactAt-nextSpawnAt});
+        slots.push({contact:nextContactAt,flight:nextContactAt-nextSpawnAt,waveSlot});
         baseSpawn();
       };
       spawnObject = ()=>{};
@@ -47,8 +49,9 @@ test('после трёх волн интервал сокращается до 
       const {contact} = slots[i];
       const previous = slots[i-1].contact;
       if(region(contact) === region(previous)){
-        const interval = contact>=110 && contact%30>=20 ? .75 : .85;
-        assert.ok(Math.abs(contact-previous-interval)<1e-9);
+        const intervals = contact % 30 < 20 ? [.85,1.15] :
+          contact < 110 ? [.85] : [slots[i-1].waveSlot===8 ? 1.2 : .75];
+        assert.ok(intervals.some(interval=>Math.abs(contact-previous-interval)<1e-9));
       } else {
         assert.ok(contact-previous<=1.7);
       }
@@ -98,22 +101,102 @@ test('быстрый блок даёт секунду предупреждени
   assert.equal(new Set(waveSingles).size,3);
 });
 
-test('в поздней волне пара оставляет проход для расширенной платформы',async()=>{
+test('в поздней волне два прохода на разных сторонах и оба подходят расширенной платформе',async()=>{
   const app = await round();
-  app.run('let pairs=0; spawnRedPair=()=>pairs++; spawnObject=()=>{}; advanceGame(110,800,600);');
-  assert.equal(app.run('pairs'),0);
+  app.run('const pairs=[]; spawnRedPair=(_flight,_index,side)=>pairs.push(side); spawnObject=()=>{}; advanceGame(110,800,600);');
+  assert.equal(app.run('pairs.length'),0);
   app.run('advanceGame(10,800,600);');
-  assert.equal(app.run('pairs'),1);
+  assert.equal(app.run('pairs.join()'),'-1,1');
   const real = await round();
   for(const width of [300,370,800,1240]){
     real.element('game').clientWidth=width;
-    real.run('boostUntil=10; objects=[]; spawnRedPair(2,5);');
-    const [left,right] = real.run('objects');
-    assert.equal(left.speed,right.speed);
-    assert.ok(left.x-left.w/2>=0 && right.x+right.w/2<=width);
-    const gap = right.x-right.w/2-(left.x+left.w/2);
-    assert.ok(gap>real.run(`2*(platformHalfWidth(${width})+COLLISION_MARGIN)`));
+    real.run('boostUntil=10; objects=[]; spawnRedPair(2,5,-1); spawnRedPair(2,5,1);');
+    const blocks = real.run('objects');
+    const gaps = [];
+    for(let i=0;i<4;i+=2){
+      const [left,right] = [blocks[i],blocks[i+1]];
+      assert.equal(left.speed,right.speed);
+      assert.ok(Math.abs(left.x-left.w/2-9)<1e-9 && Math.abs(right.x+right.w/2-(width-9))<1e-9);
+      const margin = real.run(`platformHalfWidth(${width})+COLLISION_MARGIN`);
+      const from = left.x+left.w/2+margin;
+      const to = right.x-right.w/2-margin;
+      assert.ok(from<to);
+      gaps.push({from,to});
+    }
+    assert.ok(gaps[0].to < gaps[1].from);
   }
+});
+
+test('за волну один красный смещается по диагонали; столкновение учитывает его новое положение',async()=>{
+  const app = await round();
+  app.run(`
+    const diagonal = [];
+    const spawn = spawnObject;
+    spawnObject = (kind,time,lane,options)=>{
+      if(options?.diagonal){
+        spawn(kind,time,lane,options);
+        diagonal.push(objects.at(-1));
+      }
+    };
+    player.x=-10;
+    advanceGame(30,800,600);
+  `);
+  assert.equal(app.run('diagonal.length'),1);
+  assert.equal(app.run('diagonal[0].kind'),'bad');
+  assert.ok(app.run('Math.abs(diagonal[0].vx)>0 && diagonal[0].x===diagonal[0].endX'));
+  app.run(`
+    nextSpawnAt=Infinity;
+    player.x=.5;
+    objects=[{kind:'bad',x:140,endX:400,vx:200,speed:220,y:240,w:76,h:44,rot:0,spin:0,glow:0}];
+    advanceGame(1.3,800,600);
+  `);
+  assert.equal(app.run('lives'),2);
+});
+
+test('за красным на той же линии появляется белый, затем обычный поток возвращается',async()=>{
+  const app = await round();
+  app.run(`
+    nextContactAt=8; nextSpawnAt=5.05;
+    blockBag=['bad','good','bad','good'];
+    const landings=[];
+    for(let i=0;i<4;i++){
+      landings.push(nextContactAt);
+      spawnNextBlock();
+    }
+  `);
+  const blocks = app.run('objects');
+  const times = app.run('landings');
+  assert.equal(blocks[0].kind,'bad');
+  assert.equal(blocks[1].kind,'good');
+  assert.equal(blocks[0].x,blocks[1].x);
+  assert.ok(Math.abs(times[1]-times[0]-1.15)<1e-9);
+  assert.ok(Math.abs(times[3]-times[2]-.85)<1e-9);
+});
+
+test('золото отклоняется от маршрута, а следующий белый возвращается ближе к нему',async()=>{
+  const app = await round();
+  app.run(`
+    lastSafeLane=.5; pendingGold=1;
+    blockBag=['good','good']; lastSpawnKind='good';
+    spawnNextBlock(); spawnNextBlock();
+  `);
+  const [gold,white] = app.run('objects');
+  assert.equal(gold.kind,'gold');
+  assert.ok(Math.abs(gold.x-400)>=200);
+  assert.equal(white.kind,'good');
+  assert.ok(Math.abs(white.x-400)<=96);
+});
+
+test('таймер считает зачётное время, останавливается в результате и обнуляется при повторе',async()=>{
+  const app = await round();
+  app.run('nextSpawnAt=Infinity; advanceGame(125.4,800,600); updateHud();');
+  assert.equal(app.element('elapsedTime').textContent,'02:05');
+  await app.run('finishGame()');
+  assert.equal(app.element('resultTime').textContent,'02:05');
+  app.run('advanceGame(10,800,600); updateHud();');
+  assert.equal(app.element('elapsedTime').textContent,'02:05');
+  app.run('startGame(); updateHud();');
+  assert.equal(app.element('elapsedTime').textContent,'00:00');
 });
 
 test('волна сохраняет серию и отложенное золото, при попадании серия сбрасывается',async()=>{
