@@ -63,13 +63,60 @@ test('после трёх волн интервал сокращается до 
   }
 });
 
-test('волны расширяют одиночные красные на пять процентов до потолка и оставляют выход на узком поле',async()=>{
+test('случайная ширина даёт три размера на большом поле и оставляет выход с расширенной платформой',async()=>{
   const app = await round();
-  app.run('Math.random=()=>.99; boostUntil=10;');
-  const base = app.run('redWidth(800,null)');
-  for(let wave=0;wave<9;wave++){
-    assert.ok(Math.abs(app.run(`redWidth(800,${wave})`)/base-(1+Math.min(wave*.05,.25)))<1e-9);
-    assert.ok(app.run(`platformHalfWidth(300)+redWidth(300,${wave})/2+COLLISION_MARGIN`)<300*.45);
+  for(const width of [300,370,800,1240]){
+    app.element('game').clientWidth = width;
+    app.run(`
+      objects=[];
+      lastNormalRedWasGiant=false;
+      boostUntil=10;
+      for(const roll of [.5,.85,.99]){
+        let draws=0;
+        Math.random=()=>draws++===0 ? roll : .999;
+        spawnObject('bad',3,null,{x:canvas.clientWidth/2});
+      }
+    `);
+    const [normal,wide,giant] = app.run('objects');
+    assert.ok(normal.w<wide.w);
+    if(width >= 800) assert.ok(wide.w<giant.w && giant.w/width>.37 && giant.w/width<=.38);
+    else assert.equal(wide.w,giant.w);
+    const platform = app.run(`platformHalfWidth(${width})`);
+    for(const obj of [normal,wide,giant]){
+      const reachable = Math.max(obj.x-width*.05,width*.95-obj.x);
+      assert.ok(reachable - (platform+obj.w/2+8) >= 12-1e-9);
+    }
+  }
+});
+
+test('гиганты не идут подряд в обычном потоке, а в каждой волне их не больше одного',async()=>{
+  const app = await round();
+  app.run(`
+    Math.random=()=>.999;
+    spawnObject('bad',3);
+    spawnObject('good',3);
+    spawnObject('bad',3);
+    spawnObject('bad',3);
+  `);
+  assert.deepEqual(Array.from(app.run("objects.filter(o=>o.kind==='bad').map(o=>o.w>200)")),[true,false,true]);
+  app.run(`
+    objects=[];
+    player.x=-10;
+    const waves=[];
+    const spawn=spawnObject;
+    spawnObject=(kind,flight,lane,placement)=>{
+      if(kind==='bad' && placement?.inWave){
+        spawn(kind,flight,lane,placement);
+        waves.push({cycle:Math.floor(nextContactAt/30),width:objects.at(-1).w,diagonal:placement.diagonal});
+      }
+    };
+    advanceGame(90,800,600);
+  `);
+  const waves = app.run('waves');
+  for(let cycle=0;cycle<3;cycle++){
+    const blocks=waves.filter(block=>block.cycle===cycle);
+    assert.equal(blocks.filter(block=>block.width>200).length,1);
+    assert.ok(blocks.some(block=>block.diagonal && block.width<=88));
   }
 });
 
@@ -96,6 +143,7 @@ test('быстрый блок даёт секунду предупреждени
   assert.ok(Math.abs(strike.at-dropAt)<=.05);
   assert.equal(strike.kind,'bad');
   assert.equal(strike.placement.x,240);
+  assert.ok(strike.placement.width>=64 && strike.placement.width<=88);
   assert.equal(app.element('strikeZone').classList.contains('hidden'),true);
   const waveSingles = app.run('spawns.filter(block=>block.lane!=null).slice(0,3).map(block=>block.lane)');
   assert.equal(new Set(waveSingles).size,3);
@@ -103,14 +151,14 @@ test('быстрый блок даёт секунду предупреждени
 
 test('в поздней волне два прохода на разных сторонах и оба подходят расширенной платформе',async()=>{
   const app = await round();
-  app.run('const pairs=[]; spawnRedPair=(_flight,_index,side)=>pairs.push(side); spawnObject=()=>{}; advanceGame(110,800,600);');
+  app.run('const pairs=[]; spawnRedPair=(_flight,side)=>pairs.push(side); spawnObject=()=>{}; advanceGame(110,800,600);');
   assert.equal(app.run('pairs.length'),0);
   app.run('advanceGame(10,800,600);');
   assert.equal(app.run('pairs.join()'),'-1,1');
   const real = await round();
   for(const width of [300,370,800,1240]){
     real.element('game').clientWidth=width;
-    real.run('boostUntil=10; objects=[]; spawnRedPair(2,5,-1); spawnRedPair(2,5,1);');
+    real.run('boostUntil=10; objects=[]; spawnRedPair(2,-1); spawnRedPair(2,1);');
     const blocks = real.run('objects');
     const gaps = [];
     for(let i=0;i<4;i+=2){
@@ -216,7 +264,7 @@ test('волна сохраняет серию и отложенное золо�
   app.run("catchObject({kind:'bad',x:400,y:500}); updateHud();");
   assert.equal(app.element('combo').textContent,'0/5');
   assert.equal(app.run('pendingGold'),1);
-  app.run('advanceGame(9.7,800,600); updateHud();');
+  app.run("blockBag=Array(10).fill('good'); advanceGame(9.7,800,600); updateHud();");
   assert.equal(app.run('pendingGold'),1,'золото не появляется вверху поля до конца волны');
   app.run('advanceGame(5,800,600); updateHud();');
   assert.equal(app.run('pendingGold'),0);

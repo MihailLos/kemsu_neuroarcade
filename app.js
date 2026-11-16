@@ -53,6 +53,8 @@ const FOLLOW_INTERVAL = 1.15;
 const STRIKE_WARNING = 1;
 const STRIKE_FLIGHT = .32;
 const COLLISION_MARGIN = 8;
+const CAMERA_EDGE = .05;
+const RED_DODGE_MARGIN = 12;
 const START_FLIGHT_SECONDS = 3;
 const FLIGHT_CURVE = [[0,START_FLIGHT_SECONDS],[30,2.75],[60,2.25],[90,1.75],[120,1.45]];
 const SURPRISE_SPEED_FACTOR = 1.2;
@@ -94,6 +96,8 @@ let nextContactAt = START_FLIGHT_SECONDS;
 let waveLanes = [];
 let waveSlot = 0;
 let waveStrike = null;
+let waveHasGiant = false;
+let lastNormalRedWasGiant = false;
 let surpriseCycle = -1;
 let surpriseEffect = null;
 let pendingGold = 0;
@@ -129,7 +133,7 @@ const TUTORIAL_MESSAGES = {
   surprise:'Поймайте «?», чтобы раскрыть эффект. В зачёте шансы 50/50: бонус или штраф. Пропуск блока не сбрасывает серию.',
   effects:'«?» может добавить 20 очков, удвоить цену белых, спасти сердце или расширить платформу. Может и отнять 20 очков, удешевить белые, развернуть управление или ускорить новые блоки.',
   waves:'После 20 секунд сбора идёт красная волна на 10 секунд. Предупреждение появится заранее. Уворачивайтесь, чтобы сохранить серию. В каждой волне один красный летит по диагонали без подсказки.',
-  hazards:'Уходите из отмеченной зоны сразу: через секунду туда быстро упадёт красный. Красные от волны к волне шире. С четвёртой волны блоки идут плотнее, а проходы нужно искать по очереди с двух сторон.',
+  hazards:'Уходите из отмеченной зоны сразу: через секунду туда быстро упадёт красный. Красные бывают разной ширины. С четвёртой волны блоки идут плотнее, а проходы нужно искать по очереди с двух сторон.',
   patterns:'Иногда белый летит вслед за красным по той же линии. Сначала увернитесь, потом вернитесь за белым. Со временем новые блоки падают быстрее.',
   hud:'Счёт — ваши очки.\nДо золота — серия белых из пяти.\nРекорд — лучший результат на этом компьютере.\nВ игре — прошедшее время без лимита.'
 };
@@ -579,6 +583,8 @@ function resetRoundState(){
   waveLanes = [];
   waveSlot = 0;
   waveStrike = null;
+  waveHasGiant = false;
+  lastNormalRedWasGiant = false;
   surpriseCycle = -1;
   surpriseEffect = null;
   pendingGold = 0;
@@ -791,22 +797,23 @@ function spawnNextBlock(){
     if(waveSlot === STRIKE_SLOT){
       // Планируем заранее, чтобы короткий полёт не задерживал обычные блоки.
       const dropAt = nextContactAt-STRIKE_FLIGHT;
-      waveStrike = {dropAt, warnAt:dropAt-STRIKE_WARNING, target:null, waveIndex};
+      waveStrike = {dropAt, warnAt:dropAt-STRIKE_WARNING, target:null};
     } else if(lateWave && (waveSlot === PAIR_SLOT || waveSlot === PAIR_SLOT+1)){
       // Стороны меняются между волнами, но два прохода всегда смещены в разные стороны.
       const firstSide = waveIndex % 2 ? -1 : 1;
-      spawnRedPair(flight,waveIndex,waveSlot === PAIR_SLOT ? firstSide : -firstSide);
+      spawnRedPair(flight,waveSlot === PAIR_SLOT ? firstSide : -firstSide);
       if(waveSlot === PAIR_SLOT) interval = PAIR_INTERVAL;
     } else {
       // Одиночные красные проходят через три части поля в случайном порядке.
       if(!waveLanes.length) waveLanes = shuffled([0,1,2]);
-      spawnObject(kind,flight,waveLanes.pop(),{waveIndex,diagonal:waveSlot === DIAGONAL_SLOT});
+      spawnObject(kind,flight,waveLanes.pop(),{inWave:true,diagonal:waveSlot === DIAGONAL_SLOT});
     }
     waveSlot++;
     followUsed = false;
   } else {
     waveLanes = [];
     waveSlot = 0;
+    waveHasGiant = false;
     if(!blockBag.length) blockBag = createBlockBag();
     const surpriseDue = waveIndex % 2 === 1 && surpriseCycle !== waveIndex &&
       nextContactAt >= cycleStart+10 && linkedWhiteLane === null;
@@ -856,15 +863,34 @@ function spawnNextBlock(){
   nextSpawnAt = nextContactAt - flightSecondsAt(nextContactAt-START_FLIGHT_SECONDS);
 }
 
-function redWidth(w,waveIndex){
-  const base = Math.min(rand(64,88),w*.255);
-  const growth = waveIndex == null ? 0 : Math.min(waveIndex*.05,.25);
-  // На узких полях даже самый широкий одиночный красный можно обойти.
-  return Math.min(base*(1+growth),w*.31);
+function redWidthLimit(w){
+  // Блок по центру сложнее всего обойти. Проверяем ход расширенной платформы
+  // до границы управления ладонью и оставляем запас за пределами столкновения.
+  const reach = w*(.5-CAMERA_EDGE);
+  return Math.max(0,Math.min(w*.38,2*(reach-maxPlatformHalfWidth(w)-COLLISION_MARGIN-RED_DODGE_MARGIN)));
+}
+
+function ordinaryRedWidth(w){
+  const max = Math.min(88,w*.255,redWidthLimit(w));
+  return rand(Math.min(64,max),max);
+}
+
+function randomRedWidth(w,inWave){
+  const roll = Math.random();
+  const limit = redWidthLimit(w);
+  const normalMax = Math.min(88,w*.255,limit);
+  const wideMax = Math.min(limit,Math.max(w*.25,normalMax+18));
+  const giant = roll >= .95 && limit-wideMax >= Math.max(16,w*.04) &&
+    !(inWave ? waveHasGiant : lastNormalRedWasGiant);
+  if(inWave) waveHasGiant ||= giant;
+  else lastNormalRedWasGiant = giant;
+  if(giant) return rand(Math.min(limit,Math.max(wideMax+8,w*.29)),limit);
+  if(roll >= .70) return rand(Math.min(wideMax,Math.max(normalMax,w*.18)),wideMax);
+  return ordinaryRedWidth(w);
 }
 
 function strikePosition(w){
-  const width = Math.min(waveStrike.width,w*.31);
+  const width = Math.min(waveStrike.width,w*.255,redWidthLimit(w));
   const edge = width/2 + 9;
   return {width,x:clamp(waveStrike.target*w,edge,Math.max(edge,w-edge))};
 }
@@ -874,7 +900,7 @@ function updateWaveStrike(){
   const w = canvas.clientWidth;
   if(waveStrike.target === null){
     waveStrike.target = player.x;
-    waveStrike.width = redWidth(w,waveStrike.waveIndex);
+    waveStrike.width = ordinaryRedWidth(w);
   }
   if(elapsed+1e-9 >= waveStrike.dropAt){
     spawnObject('bad',STRIKE_FLIGHT,null,strikePosition(w));
@@ -882,16 +908,16 @@ function updateWaveStrike(){
   }
 }
 
-function spawnRedPair(flight,waveIndex,side){
+function spawnRedPair(flight,side){
   const w = canvas.clientWidth;
-  const maxPlatformHalf = Math.min(93,w*.235);
+  const maxPlatformHalf = maxPlatformHalfWidth(w);
   // Запас учитывает расширение, допуск столкновения и погрешность движения рукой.
   const gapHalf = maxPlatformHalf + COLLISION_MARGIN + 9;
   const edge = 9;
   const room = w/2-gapHalf-edge;
   const shift = Math.min(w*.14,room-40);
   if(shift <= 9){
-    spawnObject('bad',flight,null,{waveIndex});
+    spawnObject('bad',flight,null,{width:ordinaryRedWidth(w)});
     return;
   }
   const center = w/2 + side*shift;
@@ -905,7 +931,10 @@ function spawnRedPair(flight,waveIndex,side){
 function spawnObject(kind,flightSeconds,lane = null,placement = {}){
   const fieldWidth = canvas.clientWidth;
   const w = placement.width ?? (kind === 'wide' ? 82 : kind === 'gold' || kind === 'surprise' ? 72 :
-    kind === 'bad' ? redWidth(fieldWidth,placement.waveIndex) : rand(64,88));
+    kind === 'bad'
+      ? (state === 'playing' && !placement.diagonal
+        ? randomRedWidth(fieldWidth,placement.inWave === true) : ordinaryRedWidth(fieldWidth))
+      : rand(64,88));
   const h = 44;
   const edge = w/2 + 9;
   const farEdge = Math.max(edge, fieldWidth-edge);
@@ -1009,7 +1038,7 @@ function showHandMarker(point, pending){
 
 function acceptHand(point){
   if(!point){ loseHand(); return false; }
-  const x = clamp(1-point.x,.05,.95);
+  const x = clamp(1-point.x,CAMERA_EDGE,1-CAMERA_EDGE);
   const acquiring = handTrack.x === null;
   const jump = !acquiring && Math.abs(x-handTrack.x) > .25;
   if(acquiring || jump){
@@ -1098,9 +1127,13 @@ function drawBackground(t,w,h){
   ctx.fillRect(0,0,w,h);
 }
 
+function maxPlatformHalfWidth(w){
+  return Math.min(93,w*.235);
+}
+
 function platformHalfWidth(w){
   // На узком поле оставляем выход с обеих сторон от центральной ошибки.
-  return elapsed < boostUntil ? Math.min(93,w*.235) : Math.min(58,w*.19);
+  return elapsed < boostUntil ? maxPlatformHalfWidth(w) : Math.min(58,w*.19);
 }
 
 function drawPlayer(w,h,dt){
