@@ -42,8 +42,8 @@ test('после трёх волн интервал сокращается до 
     const slots = app.run('slots');
     assert.equal(app.run('state'),'playing');
     assert.equal(slots[0].flight,3);
-    assert.ok(slots[100].flight < 3 && slots[100].flight > 1.65);
-    assert.ok(Math.abs(slots.at(-1).flight-1.65)<1e-9);
+    assert.ok(slots[100].flight < 3 && slots[100].flight > 1.45);
+    assert.ok(Math.abs(slots.at(-1).flight-1.45)<1e-9);
     const region = t=>Math.floor(t/30)*2+(t%30>=20?1:0);
     for(let i=1;i<slots.length;i++){
       const {contact} = slots[i];

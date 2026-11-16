@@ -83,7 +83,17 @@ test('подсказки завершаются по Далее; отсчёт 3�
   const app = await game();
   until(app,"tutorial.step === 'hearts'");
   app.run('nextTutorial()');
-  assert.equal(app.run('tutorial.step'),'hud');
+  assert.equal(app.run('tutorial.step'),'surprise');
+  assert.equal(app.element('tutorialNext').classList.contains('hidden'),true);
+  until(app,'tutorial.revealed');
+  assert.equal(app.run('activeSurprise().whitePoints'),20);
+  assert.equal(app.run('objects[0].kind'),'good');
+  assert.equal(app.element('tutorialNext').classList.contains('hidden'),false);
+  for(const step of ['effects','waves','hazards','patterns','hud']){
+    app.run('nextTutorial()');
+    assert.equal(app.run('tutorial.step'),step);
+  }
+  assert.equal(app.run('surpriseEffect'),null);
   assert.match(app.element('tutorialText').textContent,/Счёт.*\nДо золота.*\nРекорд/);
   app.run('nextTutorial()');
   assert.equal(app.run('state'),'countdown');
@@ -108,7 +118,7 @@ test('подсказки завершаются по Далее; отсчёт 3�
 });
 
 test('пропуск доступен на каждом шаге и всегда ведёт через отсчёт', async ()=>{
-  for(const step of ['move','good','gold','wide','bad','hearts','hud']){
+  for(const step of ['move','good','gold','wide','bad','hearts','surprise','effects','waves','hazards','patterns','hud']){
     const app = await game();
     app.run(`showTutorialStep('${step}'); startCountdown();`);
     assert.equal(app.run('state'),'countdown');
