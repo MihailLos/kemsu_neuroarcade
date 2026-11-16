@@ -1,6 +1,8 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const playShell = document.getElementById('playShell');
+const gameArea = document.getElementById('gameArea');
+const fullscreenButton = document.getElementById('fullscreen');
 const cameraEl = document.getElementById('camera');
 const cameraPreview = document.getElementById('cameraPreview');
 const handMarker = document.getElementById('handMarker');
@@ -1442,11 +1444,14 @@ document.getElementById('playAgain').addEventListener('click', ()=>{
   if(currentMode === 'camera') startCameraMode(); else startMouseMode();
 });
 document.getElementById('backToMenu').addEventListener('click', backToMenu);
-document.getElementById('fullscreen').addEventListener('click', async ()=>{
+fullscreenButton.addEventListener('click', async ()=>{
   try{
     if(document.fullscreenElement) await document.exitFullscreen();
-    else await playShell.requestFullscreen();
+    else await gameArea.requestFullscreen();
   }catch(err){ console.warn(err); }
+});
+document.addEventListener('fullscreenchange', ()=>{
+  fullscreenButton.textContent = document.fullscreenElement === gameArea ? 'Выйти из полного экрана' : 'На весь экран ⛶';
 });
 document.getElementById('reset').addEventListener('click', fullReset);
 
