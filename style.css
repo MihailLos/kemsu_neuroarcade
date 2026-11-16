@@ -54,6 +54,7 @@ canvas{width:100%;height:100%;display:block;position:relative;z-index:1}
 .hud-box.combo-box{background:#fff;color:var(--blue)}
 .hud-box.best-box{background:var(--mint);color:#173b1d}
 .wave-notice{align-self:flex-start;background:#94182c;color:#fff;padding:8px 12px;border-radius:14px;font-size:14px;font-weight:900}
+.strike-zone{position:absolute;top:0;bottom:0;z-index:2;pointer-events:none;border-inline:2px solid #ff4d5e;background:repeating-linear-gradient(135deg,rgba(255,77,94,.32) 0 9px,rgba(255,77,94,.13) 9px 18px)}
 .hud-label{font-size:12px;text-transform:uppercase;font-weight:800;letter-spacing:.14em;opacity:.76}
 .hud-value{font-size:clamp(28px,3vw,42px);font-weight:900;line-height:1;margin-top:4px}
 .statusline{position:absolute;left:24px;right:24px;bottom:20px;display:flex;justify-content:space-between;gap:10px;color:#fff;z-index:6;font-size:13px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.2)}
