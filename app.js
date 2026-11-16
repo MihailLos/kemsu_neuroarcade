@@ -10,6 +10,7 @@ const menuOverlay = document.getElementById('menuOverlay');
 const resultOverlay = document.getElementById('resultOverlay');
 const scoreEl = document.getElementById('score');
 const comboEl = document.getElementById('combo');
+const waveNoticeEl = document.getElementById('waveNotice');
 const bestEl = document.getElementById('best');
 const indicatorEl = document.getElementById('indicator');
 const fpsEl = document.getElementById('fps');
@@ -34,6 +35,10 @@ const MAX_LIVES = 3;
 const HEART_SHIELD_SECONDS = 2;
 const GOLD_STREAK = 5;
 const SPAWN_INTERVAL = .85;
+const COLLECTION_SECONDS = 20;
+const WAVE_SECONDS = 10;
+const WAVE_WARNING_SECONDS = 2;
+const CYCLE_SECONDS = COLLECTION_SECONDS + WAVE_SECONDS;
 const RAMP_SECONDS = 150;
 const START_FLIGHT_SECONDS = 3;
 const MIN_FLIGHT_SECONDS = 1.65;
@@ -60,6 +65,8 @@ let particles = [];
 let floaterTexts = [];
 let blockBag = [];
 let nextSpawnAt = 0;
+let nextContactAt = START_FLIGHT_SECONDS;
+let waveLanes = [];
 let pendingGold = 0;
 let lastSpawnKind = null;
 let lastSafeLane = null;
@@ -507,6 +514,8 @@ function resetRoundState(){
   elapsed = 0;
   blockBag = [];
   nextSpawnAt = 0;
+  nextContactAt = START_FLIGHT_SECONDS;
+  waveLanes = [];
   pendingGold = 0;
   lastSpawnKind = null;
   lastSafeLane = null;
@@ -629,6 +638,14 @@ function updateHud(){
   resultBestEl.textContent = bestScore;
   const progress = `${streak % GOLD_STREAK}/${GOLD_STREAK}`;
   if(comboEl.textContent !== progress) comboEl.textContent = progress;
+  const cycleTime = elapsed % CYCLE_SECONDS;
+  const waveNotice = state !== 'playing' ? '' : cycleTime >= COLLECTION_SECONDS
+    ? 'Красная волна! Уворачивайтесь'
+    : cycleTime >= COLLECTION_SECONDS - WAVE_WARNING_SECONDS ? 'Скоро красная волна' : '';
+  if(waveNoticeEl.textContent !== waveNotice){
+    waveNoticeEl.textContent = waveNotice;
+    waveNoticeEl.classList.toggle('hidden', !waveNotice);
+  }
 }
 
 function shuffled(items){
@@ -641,9 +658,9 @@ function shuffled(items){
 }
 
 function createBlockBag(){
-  const safe = shuffled([...Array(15).fill('good'), 'wide']);
-  // Выбираем четыре разных промежутка: красные не идут подряд даже на стыках.
-  const gaps = new Set(shuffled(Array.from({length:safe.length-1},(_,i)=>i)).slice(0,4));
+  const safe = shuffled([...Array(14).fill('good'), 'wide']);
+  // Выбираем разные промежутки: в обычном потоке красные не идут подряд.
+  const gaps = new Set(shuffled(Array.from({length:safe.length-1},(_,i)=>i)).slice(0,5));
   return safe.flatMap((kind,i)=>gaps.has(i) ? [kind,'bad'] : [kind]);
 }
 
@@ -652,28 +669,46 @@ function flightSecondsAt(seconds){
 }
 
 function spawnNextBlock(){
-  if(!blockBag.length) blockBag = createBlockBag();
-  // Золото занимает отдельный слот между безопасными блоками. Квота мешка не меняется.
-  const award = pendingGold > 0 && lastSpawnKind !== 'bad' && blockBag[0] !== 'bad';
-  const kind = award ? 'gold' : blockBag.shift();
-  if(award) pendingGold--;
-  spawnObject(kind,flightSecondsAt(nextSpawnAt));
+  const cycleStart = Math.floor(nextContactAt/CYCLE_SECONDS)*CYCLE_SECONDS;
+  const waveStart = cycleStart + COLLECTION_SECONDS;
+  const inWave = nextContactAt >= waveStart;
+  let kind = 'bad';
+  let lane = null;
+  if(inWave){
+    // Каждая тройка проходит через левую, среднюю и правую трети в случайном порядке.
+    if(!waveLanes.length) waveLanes = shuffled([0,1,2]);
+    lane = waveLanes.pop();
+  } else {
+    waveLanes = [];
+    if(!blockBag.length) blockBag = createBlockBag();
+    // Золото ждёт безопасного места в обычном потоке. Квота мешка не меняется.
+    const award = pendingGold > 0 && nextSpawnAt % CYCLE_SECONDS < COLLECTION_SECONDS &&
+      lastSpawnKind !== 'bad' && blockBag[0] !== 'bad';
+    kind = award ? 'gold' : blockBag.shift();
+    if(award) pendingGold--;
+  }
+  spawnObject(kind,nextContactAt-nextSpawnAt,lane);
   lastSpawnKind = kind;
-  nextSpawnAt += SPAWN_INTERVAL;
+  const boundary = inWave ? cycleStart + CYCLE_SECONDS : waveStart;
+  // Граница относится к подлёту, а не к появлению вверху поля.
+  // Оставляем полслота с каждой стороны для зоны столкновения.
+  nextContactAt += SPAWN_INTERVAL;
+  if(nextContactAt > boundary - SPAWN_INTERVAL/2){
+    nextContactAt = boundary + SPAWN_INTERVAL/2;
+  }
+  nextSpawnAt = nextContactAt - flightSecondsAt(nextContactAt-START_FLIGHT_SECONDS);
 }
 
-function spawnObject(kind,flightSeconds){
-  const w = kind === 'wide' ? 82 : kind === 'gold' ? 72 : rand(64,88);
-  const h = 44;
+function spawnObject(kind,flightSeconds,lane = null){
   const fieldWidth = canvas.clientWidth;
+  const w = kind === 'wide' ? 82 : kind === 'gold' ? 72 :
+    kind === 'bad' ? Math.min(rand(64,88),fieldWidth*.255) : rand(64,88);
+  const h = 44;
   const edge = w/2 + 9;
   const farEdge = Math.max(edge, fieldWidth-edge);
-  let x = rand(edge,farEdge);
-  if(state === 'playing' && kind === 'bad'){
-    // На узком поле красный по центру трудно обойти с расширенной платформой.
-    x = Math.random() < .5 ? rand(edge,Math.max(edge,fieldWidth*.30))
-                           : rand(Math.min(farEdge,fieldWidth*.70),farEdge);
-  } else if(state === 'playing' && fieldWidth > 0){
+  const span = farEdge-edge;
+  let x = lane === null ? rand(edge,farEdge) : edge + span*(lane+Math.random())/3;
+  if(state === 'playing' && kind !== 'bad' && fieldWidth > 0){
     if(lastSafeLane !== null){
       const previousX = clamp(lastSafeLane*fieldWidth,edge,farEdge);
       const step = fieldWidth*.42;
@@ -835,6 +870,11 @@ function drawBackground(t,w,h){
   ctx.fillRect(0,0,w,h);
 }
 
+function platformHalfWidth(w){
+  // На узком поле оставляем выход с обеих сторон от центральной ошибки.
+  return elapsed < boostUntil ? Math.min(93,w*.235) : Math.min(58,w*.19);
+}
+
 function drawPlayer(w,h,dt){
   player.x = lerp(player.x, player.targetX, Math.min(1, dt * 10));
   player.pulse += dt * 4.5;
@@ -842,7 +882,7 @@ function drawPlayer(w,h,dt){
   player.badFlash = Math.max(0, (player.badFlash || 0) - dt * 3.5);
   const px = player.x * w;
   const py = player.y * h;
-  const plateW = elapsed < boostUntil ? 186 : 116;
+  const plateW = 2 * platformHalfWidth(w);
   const plateH = 22;
 
   ctx.save();
@@ -855,7 +895,8 @@ function drawPlayer(w,h,dt){
   ctx.lineWidth = 3;
   ctx.strokeStyle = '#ffffff';
   ctx.stroke();
-  roundRect(ctx, -34, -10, 68, 20, 10);
+  const insetHalfW = Math.min(34,plateW*.4);
+  roundRect(ctx, -insetHalfW, -10, 2*insetHalfW, 20, 10);
   ctx.fillStyle = '#0f4cff';
   ctx.fill();
   ctx.fillStyle = player.badFlash > 0 ? '#ff4d5e' : '#c5efce';
@@ -903,7 +944,7 @@ function updateObjects(dt,w,h){
   const px = player.x * w;
   const py = player.y * h;
   const catchY = py - 2;
-  const catchHalfW = elapsed < boostUntil ? 93 : 58;
+  const catchHalfW = platformHalfWidth(w);
   // Небольшой допуск на отрисовку, чтобы видимый контакт всегда засчитывался.
   const collisionMargin = 8;
 

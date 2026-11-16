@@ -14,8 +14,8 @@ test('мешки сохраняют состав, красные не идут �
   for(let i=0;i<200;i++){
     const bag = app.run('createBlockBag()');
     assert.equal(bag.length,20);
-    assert.equal(bag.filter(kind=>kind==='good').length,15);
-    assert.equal(bag.filter(kind=>kind==='bad').length,4);
+    assert.equal(bag.filter(kind=>kind==='good').length,14);
+    assert.equal(bag.filter(kind=>kind==='bad').length,5);
     assert.equal(bag.filter(kind=>kind==='wide').length,1);
     assert.notEqual(bag[0],'bad');
     assert.notEqual(bag.at(-1),'bad');
@@ -23,22 +23,88 @@ test('мешки сохраняют состав, красные не идут �
   }
 });
 
-test('поток сохраняет частоту и идёт дольше трёх минут, ускорение имеет предел',async()=>{
+test('волны идут на 20–30-й секунде каждого цикла, скорость ограничена и поток не заканчивается',async()=>{
+  let reference;
   for(const fps of [10,60,120]){
     const app = await round();
     app.run(`
       const spawns = [];
-      spawnObject = (kind,flight)=>spawns.push({kind,flight,at:elapsed});
+      spawnObject = (kind,flight,lane)=>spawns.push({kind,flight,lane,contact:nextContactAt,at:elapsed});
       for(let i=0;i<${fps}*190;i++) advanceGame(1/${fps},800,600);
     `);
     const spawns = app.run('spawns');
     assert.equal(app.run('state'),'playing');
-    assert.equal(spawns.length,224);
     assert.equal(spawns[0].flight,3);
     assert.ok(spawns[100].flight < 3 && spawns[100].flight > 1.65);
-    assert.equal(spawns.at(-1).flight,1.65);
-    assert.ok(spawns.every((block,i)=>i===0||Math.abs(block.at-spawns[i-1].at-.85)<=.051));
-    assert.ok(spawns.every(({kind})=>['good','bad','wide'].includes(kind)));
+    assert.ok(Math.abs(spawns.at(-1).flight-1.65)<1e-9);
+    const schedule = [];
+    const waveGroups = new Map();
+    for(const [i,block] of spawns.entries()){
+      const inWave = block.contact % 30 >= 20;
+      schedule.push([block.contact,block.flight,inWave]);
+      assert.equal(inWave,block.lane!==null);
+      if(inWave){
+        assert.equal(block.kind,'bad');
+        const cycle = Math.floor(block.contact/30);
+        if(!waveGroups.has(cycle)) waveGroups.set(cycle,[]);
+        waveGroups.get(cycle).push(block.lane);
+      }
+      if(i>0){
+        const delta = block.at-spawns[i-1].at;
+        assert.ok(delta>=.79 && delta<=1.75, 'поток не должен сбиваться в залп или надолго прерываться');
+      }
+    }
+    assert.equal(waveGroups.size,6);
+    for(const lanes of waveGroups.values()){
+      assert.ok(lanes.length>=10);
+      assert.equal(new Set(lanes.slice(0,3)).size,3);
+    }
+    if(reference) assert.deepEqual(schedule,reference);
+    reference = schedule;
+  }
+});
+
+test('волна сохраняет серию и отложенное золото, при попадании серия сбрасывается',async()=>{
+  const app = await round();
+  app.run(`
+    const spawns = [];
+    spawnObject = kind=>spawns.push(kind);
+    advanceGame(18.2,800,600);
+    updateHud();
+  `);
+  assert.match(app.element('waveNotice').textContent,/Скоро/);
+  app.run("pendingGold=1; streak=4; spawns.length=0; advanceGame(2,800,600); updateHud();");
+  assert.match(app.element('waveNotice').textContent,/Уворачивайтесь/);
+  assert.equal(app.run('pendingGold'),1);
+  assert.equal(app.element('combo').textContent,'4/5');
+  assert.ok(app.run("spawns.length>0 && spawns.every(kind=>kind==='bad')"));
+  app.run("catchObject({kind:'bad',x:400,y:500}); updateHud();");
+  assert.equal(app.element('combo').textContent,'0/5');
+  assert.equal(app.run('pendingGold'),1);
+  app.run('advanceGame(9.7,800,600); updateHud();');
+  assert.equal(app.run('pendingGold'),1,'золото не появляется вверху поля до конца волны');
+  app.run('advanceGame(5,800,600); updateHud();');
+  assert.equal(app.run('pendingGold'),0);
+  assert.ok(app.run("spawns.includes('gold')"));
+  assert.equal(app.element('waveNotice').textContent,'');
+});
+
+test('обычный красный может появиться в центре; на узком поле есть выход даже с расширением',async()=>{
+  const app = await round();
+  for(const width of [300,370,1240]){
+    app.element('game').clientWidth = width;
+    app.run(`
+      objects=[];
+      Math.random=()=>.5;
+      boostUntil=10;
+      spawnObject('bad',3);
+      spawnObject('bad',3,1);
+    `);
+    for(const obj of app.run('objects')){
+      assert.ok(Math.abs(obj.x-width/2)<1e-9);
+      // Камера доводит центр платформы лишь до 5% или 95% ширины.
+      assert.ok(app.run(`platformHalfWidth(${width})`)+obj.w/2+8 < width*.45);
+    }
   }
 });
 
