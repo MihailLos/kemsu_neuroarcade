@@ -103,7 +103,7 @@ test('ошибочный ответ не превращается в нулев�
   assert.equal(app.element('resultBest').textContent, 120);
 });
 
-test('полный раунд с продлением сохраняет результат и позволяет начать новый', async ()=>{
+test('после трёх минут потеря последнего сердца сохраняет результат и позволяет сыграть снова', async ()=>{
   const app = fixture(100);
   await app.run('loadRecord()');
   app.run(`
@@ -111,13 +111,13 @@ test('полный раунд с продлением сохраняет рез�
     const originalFinish = finishGame;
     finishGame = ()=>{completion = originalFinish();};
     startGame();
-    spawnPlan = [];
-    score = 500;
-    bonusSeconds = 20;
-    advanceGame(100,800,600);
+    elapsed = 190;
+    lives = 1;
+    score = 515;
+    catchObject({kind:"bad",x:400,y:500});
   `);
   await app.run('completion');
-  assert.equal(app.run('elapsed'),80);
+  assert.equal(app.run('elapsed'),190);
   assert.equal(app.run('state'),'result');
   assert.equal(app.model.best,500);
   assert.equal(app.element('finalScore').textContent,500);
@@ -126,6 +126,6 @@ test('полный раунд с продлением сохраняет рез�
   assert.equal(app.run('recordSaving'),false);
   app.run('startGame()');
   assert.equal(app.run('state'),'playing');
-  assert.equal(app.element('timer').textContent,'01:00');
+  assert.equal(app.element('combo').textContent,'0/5');
   assert.equal(app.element('resultOverlay').classList.contains('hidden'),true);
 });

@@ -68,9 +68,9 @@
           <div class="hud-label" id="scoreLabel">Счёт</div>
           <div class="hud-value" id="score">0000</div>
         </div>
-        <div class="hud-box timer-box">
-          <div class="hud-label">Время</div>
-          <div class="hud-value" id="timer">01:00</div>
+        <div class="hud-box combo-box">
+          <div class="hud-label">До золота</div>
+          <div class="hud-value" id="combo">0/5</div>
         </div>
         <div class="hud-box best-box">
           <div class="hud-label">Рекорд</div>
@@ -87,12 +87,12 @@
         <div class="overlay-card">
           <div class="overlay-topline">Институт Цифры · КемГУ</div>
           <h2>ЛОВИ КОД</h2>
-          <p>Ловите полезный код и избегайте красных ошибок. У вас 3 жизни и 60 секунд; с бонусами времени — до 80 секунд.</p>
+          <p>Ловите код и избегайте ошибок. У вас три жизни. Со временем блоки падают быстрее.</p>
           <div class="legend">
             <div class="legend-item"><span class="legend-chip good">&lt;/&gt;</span> +10 очков за код</div>
             <div class="legend-item"><span class="legend-chip bad">ERROR</span> −15 очков и −1 жизнь; защита сердца — 2 секунды</div>
-            <div class="legend-item"><span class="legend-chip combo">x5</span> +20 очков за каждые 5 полезных блоков подряд</div>
-            <div class="legend-item"><span class="legend-chip time">+5 СЕК</span> дополнительное время, максимум +20 секунд</div>
+            <div class="legend-item"><span class="legend-chip gold">★ +50</span> Золото за 5 белых подряд. Пропуск белого или поимка красного сбрасывает серию</div>
+            <div class="legend-item"><span class="legend-chip combo">↔ ШИРЕ</span> Широкая платформа на 10 секунд</div>
           </div>
           <label class="training-option"><input type="checkbox" id="trainingEnabled" checked> Обучение перед игрой</label>
           <div class="actions">
@@ -129,7 +129,7 @@
             <div><span>Лучший результат</span><strong id="resultBest">0</strong></div>
             <div><span>Поймано кода</span><strong id="resultGood">0</strong></div>
             <div><span>Ошибок</span><strong id="resultBad">0</strong></div>
-            <div><span>Лучшая серия</span><strong id="resultCombo">0</strong></div>
+            <div><span>Белых подряд</span><strong id="resultCombo">0</strong></div>
           </div>
           <p class="result-text">Ты только что управлял цифровой системой с помощью компьютерного зрения.</p>
           <div class="actions">

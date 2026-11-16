@@ -26,7 +26,7 @@ class ServerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.record = Path(self.temp.name) / 'data' / 'records.json'
+        self.record = Path(self.temp.name) / 'data' / 'records_survival.json'
         self.start_server()
         self.addCleanup(self.stop_server)
 
@@ -43,7 +43,7 @@ class ServerTests(unittest.TestCase):
         self.process.wait(timeout=5)
         self.process.stdout.close()
 
-    def request(self, method='GET', path='/api/record', body=None, headers=None):
+    def request(self, method='GET', path='/api/record/survival', body=None, headers=None):
         connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=5)
         try:
             connection.request(method, path, body=body, headers=headers or {})
@@ -82,6 +82,16 @@ class ServerTests(unittest.TestCase):
         self.assertEqual((status, json.loads(body)), (200, {'bestScore': 650}))
         self.assertEqual(self.post(10), (200, {'bestScore': 650}))
         self.assertEqual(self.post(700), (200, {'bestScore': 700}))
+
+    def test_survival_does_not_read_or_overwrite_timed_record(self):
+        legacy = self.record.with_name('records.json')
+        legacy.write_bytes(b'{"bestScore": 950}\n')
+        self.stop_server()
+        self.start_server()
+        self.assertEqual(json.loads(self.request()[1]), {'bestScore': 0})
+        self.assertEqual(self.post(650), (200, {'bestScore': 650}))
+        self.assertEqual(legacy.read_bytes(), b'{"bestScore": 950}\n')
+        self.assertEqual(json.loads(self.request(path='/api/record')[1]), {'bestScore': 950})
 
     def test_invalid_requests_leave_record_unchanged(self):
         self.post(650)

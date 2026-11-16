@@ -11,7 +11,7 @@ async function game(){
     const originalFinish = finishGame;
     finishGame = ()=>{finishCount++; completion = originalFinish();};
     startGame();
-    spawnPlan = [];
+    nextSpawnAt = Infinity;
     score = 600;
   `);
   return app;
@@ -94,7 +94,7 @@ test('после смертельного столкновения другие 
   app.run(`
     lives=1;
     elapsed=59.95;
-    objects = ['gold','bad'].map(kind=>({kind,x:400,y:500,w:80,h:44,speed:200,rot:0,spin:0,glow:0}));
+    objects = ['bad','gold'].map(kind=>({kind,x:400,y:500,w:80,h:44,speed:200,rot:0,spin:0,glow:0}));
     advanceGame(.1,800,600);
   `);
   await app.run('completion');

@@ -19,20 +19,20 @@ test('включённое обучение начинается с управл
   assert.equal(app.run('state'),'training');
   assert.match(app.element('tutorialText').textContent,/мышью/);
   assert.equal(app.element('scoreLabel').textContent,'Учебный счёт');
-  assert.equal(app.run('spawnPlan.length'),0);
+  assert.equal(app.run('blockBag.length'),0);
   app.run('advanceTutorial(4.9,800,600)');
   assert.equal(app.run('objects.length'),0);
   app.run('advanceTutorial(.1,800,600)');
   assert.equal(app.run('objects.length'),1);
   assert.equal(app.run('objects[0].kind'),'good');
-  assert.equal(app.element('timer').textContent,'01:00');
+  assert.equal(app.element('combo').textContent,'0/5');
 });
 
 test('обе кнопки управления учитывают настройку; при отключении сразу идёт зачёт', async ()=>{
   const mouse = await game();
   mouse.run('backToMenu(); trainingEnabledEl.checked=false; ensureAudio=()=>{}; startMouseMode();');
   assert.equal(mouse.run('state'),'playing');
-  assert.equal(mouse.run('spawnPlan.length'),121);
+  assert.equal(mouse.run('objects.length'),0);
   const camera = await game();
   camera.run('backToMenu(); ensureAudio=()=>{}; initHandTracking=async()=>{}; videoStream={};');
   await camera.run('startCameraMode()');
@@ -52,24 +52,21 @@ test('пропущенный блок повторяется, а следующ�
   assert.equal(app.run('score'),0);
   app.run('player.x=.5;');
   until(app,"tutorial.step === 'gold'");
-  assert.equal(app.run('score'),10);
+  assert.equal(app.run('score'),50);
   assert.equal(app.run('objects.length'),1);
 });
 
-test('пять типов идут по очереди; учебные эффекты настоящие, но не сохраняются', async ()=>{
+test('золото в обучении следует за пятью белыми; учебные эффекты не сохраняются', async ()=>{
   const app = await game();
   until(app,"tutorial.step === 'gold'");
-  assert.equal(app.run('score'),10);
+  assert.equal(app.run('score'),50);
   until(app,"tutorial.step === 'wide'");
-  assert.equal(app.run('score'),60);
-  until(app,"tutorial.step === 'time'");
-  assert.ok(app.run('boostUntil > elapsed'));
+  assert.equal(app.run('score'),100);
   until(app,"tutorial.step === 'bad'");
-  assert.equal(app.run('bonusSeconds'),5);
-  assert.equal(app.element('timer').textContent,'01:05');
+  assert.ok(app.run('boostUntil > elapsed'));
   until(app,"tutorial.step === 'hearts'");
   assert.equal(app.run('lives'),2);
-  assert.equal(app.run('score'),45);
+  assert.equal(app.run('score'),85);
   assert.equal(app.element('heart1').classList.contains('is-pulsing'),true);
   assert.equal(app.run('badCaught'),1);
   assert.equal(app.run('objects.length'),0);
@@ -87,11 +84,11 @@ test('подсказки завершаются по Далее; отсчёт 3�
   until(app,"tutorial.step === 'hearts'");
   app.run('nextTutorial()');
   assert.equal(app.run('tutorial.step'),'hud');
-  assert.match(app.element('tutorialText').textContent,/Счёт.*\nВремя.*\nРекорд/);
+  assert.match(app.element('tutorialText').textContent,/Счёт.*\nДо золота.*\nРекорд/);
   app.run('nextTutorial()');
   assert.equal(app.run('state'),'countdown');
   assert.equal(app.element('tutorialCountdown').textContent,'3');
-  assert.equal(app.run('score'),45);
+  assert.equal(app.run('score'),85);
   app.run('advanceTutorial(1,800,600)');
   assert.equal(app.element('tutorialCountdown').textContent,'2');
   app.run('advanceTutorial(1,800,600)');
@@ -99,19 +96,19 @@ test('подсказки завершаются по Далее; отсчёт 3�
   app.run('advanceTutorial(1,800,600)');
   assert.equal(app.run('state'),'playing');
   assert.equal(app.run('tutorial'),null);
-  for(const name of ['score','elapsed','bonusSeconds','heartShieldUntil','boostUntil','goodCaught','badCaught','streak']){
+  for(const name of ['score','elapsed','heartShieldUntil','boostUntil','goodCaught','badCaught','streak']){
     assert.equal(app.run(name),0,name);
   }
   assert.equal(app.run('lives'),3);
-  assert.equal(app.element('timer').textContent,'01:00');
+  assert.equal(app.element('combo').textContent,'0/5');
   assert.equal(app.element('scoreLabel').textContent,'Счёт');
-  assert.equal(app.run('spawnIndex'),0);
-  assert.equal(app.run('spawnPlan.length'),121);
+  assert.equal(app.run('nextSpawnAt'),0);
+  assert.equal(app.run('blockBag.length'),0);
   assert.ok(app.calls.every(call=>call.method==='GET'));
 });
 
 test('пропуск доступен на каждом шаге и всегда ведёт через отсчёт', async ()=>{
-  for(const step of ['move','good','gold','wide','time','bad','hearts','hud']){
+  for(const step of ['move','good','gold','wide','bad','hearts','hud']){
     const app = await game();
     app.run(`showTutorialStep('${step}'); startCountdown();`);
     assert.equal(app.run('state'),'countdown');
@@ -135,7 +132,7 @@ test('сброс отменяет обучение и отсчёт; скрыта
   assert.equal(app.run('tutorial.step'),'move');
 });
 
-test('обучение не начисляет бонус за пятёрку и не заканчивается потерей учебных жизней', async ()=>{
+test('в обучении бонус появляется отдельным блоком и учебные жизни не завершают раунд', async ()=>{
   const app = await game();
   app.run("for(let i=0;i<5;i++) catchObject({kind:'good',x:0,y:0});");
   assert.equal(app.run('score'),50);

@@ -9,7 +9,7 @@ const cameraReadyStatus = document.getElementById('cameraReadyStatus');
 const menuOverlay = document.getElementById('menuOverlay');
 const resultOverlay = document.getElementById('resultOverlay');
 const scoreEl = document.getElementById('score');
-const timerEl = document.getElementById('timer');
+const comboEl = document.getElementById('combo');
 const bestEl = document.getElementById('best');
 const indicatorEl = document.getElementById('indicator');
 const fpsEl = document.getElementById('fps');
@@ -32,17 +32,11 @@ const finalScoreEl = document.getElementById('finalScore');
 
 const MAX_LIVES = 3;
 const HEART_SHIELD_SECONDS = 2;
-const GAME_SECONDS = 60;
-const TIME_BONUS_SECONDS = 5;
-const MAX_BONUS_SECONDS = 20;
-// В каждом 15-секундном этапе — один дополнительный блок времени.
-const ROUND_PHASES = [
-  {good:11, bad:5, gold:1, wide:1, time:1},
-  {good:13, bad:5, gold:2, wide:1, time:1},
-  {good:15, bad:5, gold:2, wide:1, time:1},
-  {good:17, bad:7, gold:1, wide:2, time:1}
-];
-const EXTRA_PHASE = {good:4, bad:2, gold:1, wide:0, time:0};
+const GOLD_STREAK = 5;
+const SPAWN_INTERVAL = .85;
+const RAMP_SECONDS = 150;
+const START_FLIGHT_SECONDS = 3;
+const MIN_FLIGHT_SECONDS = 1.65;
 let dpr = Math.min(window.devicePixelRatio || 1, 2);
 let currentMode = 'idle'; // idle camera mouse
 let state = 'menu'; // menu camera-ready training countdown playing result
@@ -64,9 +58,11 @@ let player = {x:0.5, targetX:0.5, y:0.86, width:118, height:22, pulse:0};
 let objects = [];
 let particles = [];
 let floaterTexts = [];
-let spawnPlan = [];
-let spawnIndex = 0;
-let bonusSeconds = 0;
+let blockBag = [];
+let nextSpawnAt = 0;
+let pendingGold = 0;
+let lastSpawnKind = null;
+let lastSafeLane = null;
 let elapsed = 0;
 let lives = MAX_LIVES;
 let heartShieldUntil = 0;
@@ -81,17 +77,15 @@ let recordsReady = false;
 let gameOverFlag = false;
 let boostUntil = 0;
 let recordCelebration = false;
-let lastTier = 0;
 let tutorial = null;
-const TUTORIAL_BLOCKS = ['good','gold','wide','time','bad'];
+const TUTORIAL_BLOCKS = ['good','gold','wide','bad'];
 const TUTORIAL_MESSAGES = {
-  good:'Этот блок даёт вам 10 очков. В обучении бонусов за серию нет. Поймайте блок платформой.',
-  gold:'Этот блок даёт вам 50 очков. Поймайте его платформой.',
+  good:'Белый блок даёт 10 очков. Поймайте пять белых подряд, чтобы появилось золото. Пропуск белого или поимка красного обнуляет серию.',
+  gold:'Вы заработали золото! Поймайте его, чтобы получить 50 очков. Пропуск золота не сбрасывает серию.',
   wide:'Этот блок расширяет вашу платформу на 10 секунд. Поймайте его платформой.',
-  time:'Этот блок увеличивает общее время игры на 5 секунд. Поймайте его платформой.',
   bad:'Этот блок уменьшает здоровье на 1 и количество очков на 15. Поймайте его, чтобы увидеть эффект.',
   hearts:'После ловли красного блока здоровье уменьшается на 1 и включается защита сердца на 2 секунды. Во время защиты красные всё равно снимают очки и сбрасывают серию. При потере всех сердец игра заканчивается.',
-  hud:'Счёт — ваши собранные очки.\nВремя — оставшееся время игры.\nРекорд — лучший результат на этом компьютере. Побейте его, чтобы получить приз.'
+  hud:'Счёт — ваши собранные очки.\nДо золота — сколько белых поймано подряд из пяти.\nРекорд — лучший результат на этом компьютере. Побейте его, чтобы получить приз.'
 };
 
 const CODE_TOKENS = ['</>', '{}', 'var', 'AI', 'JS', 'if'];
@@ -115,7 +109,7 @@ async function requestRecord(options = {}){
   const controller = new AbortController();
   const timeout = setTimeout(()=>controller.abort(), 5000);
   try {
-    const response = await fetch('/api/record', {
+    const response = await fetch('/api/record/survival', {
       ...options, cache:'no-store', signal:controller.signal
     });
     if(!response.ok) throw new Error('HTTP ' + response.status);
@@ -152,7 +146,7 @@ function loadRecord(){
       recordsReady = false;
       recordError = true;
       console.error('Ошибка файла рекорда:',err);
-      hintEl.textContent = 'Не удалось прочитать файл рекорда. Проверьте сервер и data/records.json.';
+      hintEl.textContent = 'Не удалось прочитать файл рекорда. Проверьте сервер и data/records_survival.json.';
       setIndicator('Ошибка файла рекорда');
       return null;
     }
@@ -170,7 +164,7 @@ function saveRecord(value){
     } catch (err) {
       recordError = true;
       console.error('Не удалось сохранить рекорд:',err);
-      hintEl.textContent = 'Ошибка записи рекорда в data/records.json. Проверьте права доступа к папке.';
+      hintEl.textContent = 'Ошибка записи рекорда в data/records_survival.json. Проверьте права доступа к папке.';
       setIndicator('Рекорд не сохранён');
       return null;
     }
@@ -183,7 +177,10 @@ function refreshRecord(){
 loadRecord();
 setInterval(refreshRecord, 2000);
 window.addEventListener('focus', refreshRecord);
-document.addEventListener('visibilitychange', refreshRecord);
+document.addEventListener('visibilitychange', ()=>{
+  lastFrame = performance.now();
+  return refreshRecord();
+});
 
 function pad4(n){ return String(Math.max(0, Math.round(n))).padStart(4,'0'); }
 function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
@@ -358,21 +355,29 @@ function showTutorialStep(step){
 
 function spawnTutorialBlock(){
   if(!tutorial || !TUTORIAL_BLOCKS.includes(tutorial.step)) return;
-  spawnObject({kind:tutorial.step,tier:0});
+  spawnObject(tutorial.step,tutorial.step === 'good' ? 2.2 : 5);
   const obj = objects[objects.length-1];
   obj.x = canvas.clientWidth*.5;
-  obj.speed = (player.y*canvas.clientHeight+50)/5;
   obj.rot = obj.spin = 0;
 }
 
 function tutorialCaught(){
   if(!tutorial) return;
+  if(tutorial.step === 'good' && streak % GOLD_STREAK !== 0){
+    tutorialText.textContent = `До золота: ${streak % GOLD_STREAK}/${GOLD_STREAK}. Поймайте следующий белый блок.`;
+    spawnTutorialBlock();
+    return;
+  }
   if(tutorial.step === 'bad'){
     showTutorialStep('hearts');
     return;
   }
   tutorial.caught = true;
   tutorial.feedback = 1.2;
+  if(tutorial.step === 'good'){
+    tutorialText.textContent = 'Пять подряд! Следующим прилетит золотой блок.';
+    return;
+  }
   tutorialText.textContent = 'Поймано! ' + TUTORIAL_MESSAGES[tutorial.step].replace(' Поймайте блок платформой.','').replace(' Поймайте его платформой.','');
 }
 
@@ -448,8 +453,7 @@ function tutorialTarget(){
     const obj = objects[0];
     return {x:obj.x-obj.w/2-12,y:obj.y-obj.h/2-12,width:obj.w+24,height:obj.h+24};
   }
-  const id = tutorial.step === 'hearts' ? 'lives' : tutorial.step === 'hud' ? 'hud' :
-    tutorial.step === 'time' ? 'timer' : 'score';
+  const id = tutorial.step === 'hearts' ? 'lives' : tutorial.step === 'hud' ? 'hud' : 'combo';
   const rect = document.getElementById(id).getBoundingClientRect();
   const shell = playShell.getBoundingClientRect();
   return {x:rect.left-shell.left-8,y:rect.top-shell.top-8,width:rect.width+16,height:rect.height+16};
@@ -501,9 +505,11 @@ function resetRoundState(){
   particles = [];
   floaterTexts = [];
   elapsed = 0;
-  bonusSeconds = 0;
-  spawnPlan = [];
-  spawnIndex = 0;
+  blockBag = [];
+  nextSpawnAt = 0;
+  pendingGold = 0;
+  lastSpawnKind = null;
+  lastSafeLane = null;
   lastFrame = performance.now();
   streak = 0;
   bestCombo = 0;
@@ -514,7 +520,6 @@ function resetRoundState(){
   gameOverFlag = false;
   boostUntil = 0;
   recordCelebration = false;
-  lastTier = 0;
   player.x = player.targetX = 0.5;
   player.hitFlash = player.badFlash = 0;
 }
@@ -523,7 +528,6 @@ function startGame(){
   if(!canStartGame()) return;
   closeTutorial();
   resetRoundState();
-  spawnPlan = createSpawnPlan();
   state = 'playing';
   updateHud();
   menuOverlay.classList.add('hidden');
@@ -541,7 +545,7 @@ async function finishGame(){
   recordSaving = true;
   recordCelebration = false;
   updateHud();
-  document.getElementById('resultReason').textContent = lives === 0 ? 'Жизни закончились' : 'Время вышло';
+  document.getElementById('resultReason').textContent = 'Жизни закончились';
   finalScoreEl.textContent = score;
   resultBestEl.textContent = bestScore;
   resultGoodEl.textContent = goodCaught;
@@ -623,10 +627,8 @@ function updateHud(){
   scoreEl.textContent = pad4(score);
   bestEl.textContent = pad4(bestScore);
   resultBestEl.textContent = bestScore;
-  const timeLeft = Math.ceil(Math.max(0, GAME_SECONDS + bonusSeconds - (state === 'training' || state === 'countdown' ? 0 : elapsed) - 1e-9));
-  const mm = String(Math.floor(timeLeft / 60)).padStart(2,'0');
-  const ss = String(Math.floor(timeLeft % 60)).padStart(2,'0');
-  timerEl.textContent = `${mm}:${ss}`;
+  const progress = `${streak % GOLD_STREAK}/${GOLD_STREAK}`;
+  if(comboEl.textContent !== progress) comboEl.textContent = progress;
 }
 
 function shuffled(items){
@@ -638,81 +640,51 @@ function shuffled(items){
   return result;
 }
 
-function trailingBad(kinds, initial = 0){
-  let run = initial;
-  for(const kind of kinds){
-    run = kind === 'bad' ? run+1 : 0;
-    if(run > 2) return -1;
-  }
-  return run;
+function createBlockBag(){
+  const safe = shuffled([...Array(15).fill('good'), 'wide']);
+  // Выбираем четыре разных промежутка: красные не идут подряд даже на стыках.
+  const gaps = new Set(shuffled(Array.from({length:safe.length-1},(_,i)=>i)).slice(0,4));
+  return safe.flatMap((kind,i)=>gaps.has(i) ? [kind,'bad'] : [kind]);
 }
 
-function createPhaseKinds(counts, previousBad, maxTimeIndex = Infinity){
-  const ordinary = [...Array(counts.good).fill('good'), ...Array(counts.bad).fill('bad')];
-  const specials = shuffled([
-    ...Array(counts.gold).fill('gold'), ...Array(counts.wide).fill('wide'),
-    ...Array(counts.time).fill('time')
-  ]);
-  const count = ordinary.length + specials.length;
-  const slots = Array(count).fill(null);
-  // Разносим бонусы по отдельным участкам этапа, а не собираем в одной точке.
-  specials.forEach((kind,i)=>{
-    const from = Math.floor(i*count/specials.length);
-    const end = Math.floor((i+1)*count/specials.length);
-    const to = kind === 'time' ? Math.min(end,maxTimeIndex+1) : end;
-    slots[from + Math.floor(Math.random()*(to-from))] = kind;
-  });
-  for(let attempt=0;attempt<100;attempt++){
-    const bag = shuffled(ordinary);
-    const kinds = slots.map(kind=>kind || bag.pop());
-    if(trailingBad(kinds,previousBad) !== -1) return kinds;
-  }
-  // Ограничиваем число попыток даже при неудачном генераторе случайных чисел.
-  let remainingBad = counts.bad;
-  let run = previousBad;
-  return slots.map(special=>{
-    const kind = special || (remainingBad > 0 && run < 2 ? 'bad' : 'good');
-    if(!special && kind === 'bad') remainingBad--;
-    run = kind === 'bad' ? run+1 : 0;
-    return kind;
-  });
+function flightSecondsAt(seconds){
+  return lerp(START_FLIGHT_SECONDS,MIN_FLIGHT_SECONDS,clamp(seconds/RAMP_SECONDS,0,1));
 }
 
-function createSpawnPlan(){
-  const plan = [];
-  let previousBad = 0;
-  const phases = [...ROUND_PHASES, ...Array(4).fill(EXTRA_PHASE)];
-  phases.forEach((counts,phase)=>{
-    const tier = Math.min(phase,3);
-    const flightSeconds = 3 / (1 + tier*.17);
-    const start = phase < 4 ? Math.max(3,phase*15) : GAME_SECONDS+(phase-4)*5;
-    const end = phase < 4 ? (phase+1)*15 : start+5;
-    const count = Object.values(counts).reduce((sum,n)=>sum+n,0);
-    const interval = (end-start)/count;
-    // Все блоки времени доступны до начала появления блоков продления.
-    const maxTimeIndex = Math.floor((GAME_SECONDS-2.5-start)/interval);
-    const kinds = createPhaseKinds(counts,previousBad,maxTimeIndex);
-    previousBad = trailingBad(kinds,previousBad);
-    kinds.forEach((kind,i)=>{
-      const catchAt = start+interval*i;
-      plan.push({kind, at:catchAt-flightSeconds, catchAt, tier, phase,
-                 bonusRequired:Math.max(0,(phase-3)*TIME_BONUS_SECONDS)});
-    });
-  });
-  return plan;
+function spawnNextBlock(){
+  if(!blockBag.length) blockBag = createBlockBag();
+  // Золото занимает отдельный слот между безопасными блоками. Квота мешка не меняется.
+  const award = pendingGold > 0 && lastSpawnKind !== 'bad' && blockBag[0] !== 'bad';
+  const kind = award ? 'gold' : blockBag.shift();
+  if(award) pendingGold--;
+  spawnObject(kind,flightSecondsAt(nextSpawnAt));
+  lastSpawnKind = kind;
+  nextSpawnAt += SPAWN_INTERVAL;
 }
 
-function spawnObject(entry){
-  const kind = entry.kind;
-  const w = kind === 'wide' || kind === 'time' ? 82 : kind === 'gold' ? 72 : rand(64,88);
+function spawnObject(kind,flightSeconds){
+  const w = kind === 'wide' ? 82 : kind === 'gold' ? 72 : rand(64,88);
   const h = 44;
-  const x = rand(w/2 + 9, Math.max(w/2 + 9, canvas.clientWidth-w/2-9));
-  // Время подлёта зависит от этапа, а не от высоты окна и случайной скорости.
-  const flightSeconds = 3 / (1 + entry.tier*.17);
+  const fieldWidth = canvas.clientWidth;
+  const edge = w/2 + 9;
+  const farEdge = Math.max(edge, fieldWidth-edge);
+  let x = rand(edge,farEdge);
+  if(state === 'playing' && kind === 'bad'){
+    // На узком поле красный по центру трудно обойти с расширенной платформой.
+    x = Math.random() < .5 ? rand(edge,Math.max(edge,fieldWidth*.30))
+                           : rand(Math.min(farEdge,fieldWidth*.70),farEdge);
+  } else if(state === 'playing' && fieldWidth > 0){
+    if(lastSafeLane !== null){
+      const previousX = clamp(lastSafeLane*fieldWidth,edge,farEdge);
+      const step = fieldWidth*.42;
+      x = clamp(x,Math.max(edge,previousX-step),Math.min(farEdge,previousX+step));
+    }
+    lastSafeLane = x/fieldWidth;
+  }
   const speed = (player.y*canvas.clientHeight + 50) / flightSeconds;
   const tokens = kind === 'bad' ? ERROR_TOKENS : CODE_TOKENS;
   objects.push({x,y:-50,w,h,speed,kind,
-    text:kind==='time'?'+5 СЕК':kind==='gold'?'★ +50':kind==='wide'?'↔  ШИРЕ':tokens[Math.floor(Math.random()*tokens.length)],
+    text:kind==='gold'?'★ +50':kind==='wide'?'↔  ШИРЕ':tokens[Math.floor(Math.random()*tokens.length)],
     rot:rand(-.12,.12),spin:rand(-.25,.25),glow:rand(0,Math.PI*2)});
 }
 
@@ -915,23 +887,18 @@ function roundRect(context, x, y, w, h, r){
 }
 
 function drawObject(obj){
-  const palette = {good:['#ffffff','#0f4cff'],bad:['#ff4d5e','#ffffff'],gold:['#ffcf48','#533600'],wide:['#c5efce','#1a5634'],time:['#bdefff','#084c70']};
+  const palette = {good:['#ffffff','#0f4cff'],bad:['#ff4d5e','#ffffff'],gold:['#ffcf48','#533600'],wide:['#c5efce','#1a5634']};
   const [bg,fg] = palette[obj.kind];
   ctx.save();ctx.translate(obj.x,obj.y);ctx.rotate(obj.rot);
   ctx.shadowBlur=12;ctx.shadowColor='rgba(0,0,0,.15)';
   roundRect(ctx,-obj.w/2,-obj.h/2,obj.w,obj.h,13);
   ctx.fillStyle=bg;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=fg;ctx.stroke();
-  ctx.fillStyle=fg;ctx.font=`900 ${obj.kind==='wide'?13:obj.kind==='time'?15:obj.kind==='gold'?16:obj.kind==='good'?18:15}px Arial,sans-serif`;
+  ctx.fillStyle=fg;ctx.font=`900 ${obj.kind==='wide'?13:obj.kind==='gold'?16:obj.kind==='good'?18:15}px Arial,sans-serif`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(obj.text,0,1);ctx.restore();
 }
 
 function updateObjects(dt,w,h){
-  const tier = Math.min(3, Math.floor(elapsed / 15));
-  if(state === 'playing' && tier > lastTier){ lastTier=tier; addFloater('УРОВЕНЬ '+(tier+1),w*.5,h*.39,'#b76a00'); soundCombo(); }
-  while(state === 'playing' && spawnIndex < spawnPlan.length && spawnPlan[spawnIndex].at <= elapsed+1e-9 &&
-        spawnPlan[spawnIndex].bonusRequired <= bonusSeconds){
-    spawnObject(spawnPlan[spawnIndex++]);
-  }
+  while(state === 'playing' && nextSpawnAt <= elapsed+1e-9) spawnNextBlock();
 
   const px = player.x * w;
   const py = player.y * h;
@@ -940,7 +907,7 @@ function updateObjects(dt,w,h){
   // Небольшой допуск на отрисовку, чтобы видимый контакт всегда засчитывался.
   const collisionMargin = 8;
 
-  for(let i = objects.length - 1; i >= 0; i--){
+  for(let i = 0; i < objects.length;){
     const obj = objects[i];
     const previousY = obj.y;
     obj.y += obj.speed * dt;
@@ -956,17 +923,24 @@ function updateObjects(dt,w,h){
     const sweptBottom = Math.max(previousY, obj.y) + obj.h / 2;
     const hitY = sweptBottom >= platformTop - 4 && sweptTop <= platformBottom + 4;
     if(hitX && hitY){
-      catchObject(obj);
       objects.splice(i,1);
+      catchObject(obj);
       updateHud();
       if(state === 'training'){ tutorialCaught(); return; }
       if(state !== 'playing') return;
       continue;
     }
 
-    if(obj.y - obj.h/2 > h + 40){
-      objects.splice(i,1);
+    // После выхода из зоны столкновения белый уже нельзя поймать.
+    if(obj.kind === 'good' && !obj.missed && obj.y - obj.h/2 > platformBottom + 4){
+      obj.missed = true;
+      resetStreak(obj,'БЕЛЫЙ ПРОПУЩЕН');
+      if(state === 'training'){
+        tutorialText.textContent = TUTORIAL_MESSAGES.good;
+      }
     }
+    if(obj.y - obj.h/2 > h + 40) objects.splice(i,1);
+    else i++;
   }
 }
 
@@ -975,7 +949,7 @@ function catchObject(obj){
   if(obj.kind === 'bad'){
     score = Math.max(0, score - 15);
     badCaught++;
-    streak = 0;
+    resetStreak(obj,'СЕРИЯ СБРОШЕНА');
     addParticles(obj.x,obj.y,'#ff4d5e',26);
     player.badFlash = 1;
     addFloater('-15',obj.x,obj.y,'#ff4d5e');
@@ -991,50 +965,48 @@ function catchObject(obj){
   }
 
   goodCaught++;
-  streak++;
-  bestCombo = Math.max(bestCombo,streak);
   player.hitFlash = 1;
-  if(obj.kind === 'time'){
-    const added = Math.min(TIME_BONUS_SECONDS,MAX_BONUS_SECONDS-bonusSeconds);
-    bonusSeconds += added;
-    addFloater(`+${added} СЕК`,obj.x,obj.y,'#084c70');
-    addParticles(obj.x,obj.y,'#bdefff',26);
-    soundCombo();
-  } else if(obj.kind === 'wide'){
+  if(obj.kind === 'wide'){
     boostUntil = elapsed + 10;
     addFloater('ПЛАТФОРМА ШИРЕ: 10 СЕК',obj.x,obj.y,'#b76a00');
     addParticles(obj.x,obj.y,'#ffb900',32);
     soundCombo();
-  } else {
-    const points = obj.kind === 'gold' ? 50 : 10;
-    score += points;
-    addFloater(`+${points}`,obj.x,obj.y,'#b76a00');
-    addParticles(obj.x,obj.y,'#ffb900',obj.kind === 'gold' ? 36 : 30);
-    if(obj.kind === 'gold') soundCombo(); else soundCatch();
+    return;
   }
-  // Любой полезный блок завершает пятёрку: код, золото, расширение или время.
-  if(state === 'playing' && streak % 5 === 0){
-    score += 20;
-    addFloater(`СЕРИЯ x${streak}  +20`,obj.x,obj.y-24,'#b76a00');
-    addParticles(obj.x,obj.y,'#ffb900',26);
+
+  const points = obj.kind === 'gold' ? 50 : 10;
+  score += points;
+  addFloater(`+${points}`,obj.x,obj.y,'#b76a00');
+  addParticles(obj.x,obj.y,'#ffb900',obj.kind === 'gold' ? 36 : 30);
+  if(obj.kind === 'gold'){
     soundCombo();
+    return;
+  }
+
+  streak++;
+  bestCombo = Math.max(bestCombo,streak);
+  if(state === 'playing' && streak % GOLD_STREAK === 0){
+    pendingGold++;
+    addFloater('ЗОЛОТО ЗАРАБОТАНО',obj.x,obj.y-24,'#b76a00');
+    soundCombo();
+  } else {
+    soundCatch();
   }
 }
 
+function resetStreak(obj,reason){
+  if(streak % GOLD_STREAK > 0) addFloater(reason,obj.x,obj.y-24,'#b76a00');
+  streak = 0;
+}
+
 function advanceGame(seconds,w,h){
-  // Маленькие шаги сохраняют столкновения, реальное время не растягивается при низком FPS.
+  if(document.hidden) return;
+  // Маленькие шаги сохраняют столкновения при низком FPS.
   while(seconds > 1e-9 && state === 'playing'){
-    const remaining = GAME_SECONDS + bonusSeconds - elapsed;
-    if(remaining <= 1e-9){ finishGame(); break; }
-    const dt = Math.min(.05,seconds,remaining);
+    const dt = Math.min(.05,seconds);
     elapsed += dt;
     updateObjects(dt,w,h);
-    if(state !== 'playing') break;
     seconds -= dt;
-    if(elapsed >= GAME_SECONDS + bonusSeconds - 1e-9){
-      elapsed = GAME_SECONDS + bonusSeconds;
-      finishGame();
-    }
   }
 }
 

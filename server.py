@@ -14,31 +14,44 @@ lock = threading.Lock()
 os.chdir(ROOT)
 
 
-def read_best():
-    if not RECORD_FILE.exists():
-        save_best(0)
+def read_best(record_file):
+    if not record_file.exists():
+        save_best(0, record_file)
         return 0
     # Редакторы Windows могут добавлять BOM в начало UTF-8-файла.
-    data = json.loads(RECORD_FILE.read_text(encoding='utf-8-sig'))
+    data = json.loads(record_file.read_text(encoding='utf-8-sig'))
     score = data['bestScore']
     if type(score) is not int or not (0 <= score <= 1_000_000_000):
         raise ValueError('Некорректный рекорд')
     return score
 
 
-def save_best(score):
-    RECORD_FILE.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix='.record-', suffix='.tmp', dir=RECORD_FILE.parent)
+def save_best(score, record_file):
+    record_file.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix='.record-', suffix='.tmp', dir=record_file.parent)
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as out:
             json.dump({'bestScore': score}, out, ensure_ascii=False, indent=2)
             out.write('\n')
             out.flush()
             os.fsync(out.fileno())
-        os.replace(tmp, RECORD_FILE)
+        os.replace(tmp, record_file)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+
+
+def survival_record_file():
+    return RECORD_FILE.with_name('records_survival.json')
+
+
+def record_file_for(path):
+    route = urlsplit(path).path
+    if route == '/api/record':
+        return RECORD_FILE
+    if route == '/api/record/survival':
+        return survival_record_file()
+    return None
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -59,10 +72,11 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_GET(self):
-        if urlsplit(self.path).path == '/api/record':
+        record_file = record_file_for(self.path)
+        if record_file is not None:
             try:
                 with lock:
-                    best = read_best()
+                    best = read_best(record_file)
                 return self.reply_json(200, {'bestScore': best})
             except Exception as exc:
                 print('Ошибка чтения рекорда:', exc)
@@ -70,7 +84,8 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
-        if urlsplit(self.path).path != '/api/record':
+        record_file = record_file_for(self.path)
+        if record_file is None:
             return self.reply_json(404, {'error':'Не найдено'})
         origin = self.headers.get('Origin')
         if origin and origin not in (f'http://localhost:{PORT}', f'http://127.0.0.1:{PORT}'):
@@ -90,8 +105,8 @@ class Handler(SimpleHTTPRequestHandler):
 
         try:
             with lock:
-                best = max(read_best(), score)
-                save_best(best)
+                best = max(read_best(record_file), score)
+                save_best(best, record_file)
             return self.reply_json(200, {'bestScore': best})
         except Exception as exc:
             print('Ошибка записи рекорда:', exc)
@@ -102,7 +117,7 @@ def create_server(host='127.0.0.1', port=PORT):
     httpd = ThreadingHTTPServer((host, port), Handler)
     try:
         with lock:
-            read_best()
+            read_best(survival_record_file())
     except Exception:
         httpd.server_close()
         raise
